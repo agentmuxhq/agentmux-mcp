@@ -138,9 +138,14 @@ export default function App() {
   useEffect(() => {
     if (!inTauri()) return;
     refresh();
-    const t = setInterval(refresh, 2500);
+    // Events only come from this process. Agents connected to another AgentMux process (an
+    // "external" daemon) or another synced Mac write straight to the vault, so poll the open session too.
+    const t = setInterval(() => {
+      refresh();
+      loadMessages();
+    }, 2500);
     return () => clearInterval(t);
-  }, [refresh]);
+  }, [refresh, loadMessages]);
 
   useEffect(() => {
     if (!inTauri()) return;

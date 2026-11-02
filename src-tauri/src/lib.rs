@@ -627,6 +627,20 @@ pub fn run() {
                 }
             });
 
+            // If another AgentMux process held the socket ("external") and goes away, take over so the
+            // app doesn't stay a bystander.
+            let handle2 = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    let st = handle2.state::<AppState>();
+                    let external = st.daemon.lock().unwrap().as_str() == "external";
+                    if external && !config::is_paused() && tokio::net::UnixStream::connect(config::socket_path()).await.is_err() {
+                        let _ = power(&handle2, true).await;
+                    }
+                }
+            });
+
             // Close questions whose wake never started or died with an earlier run of the app.
             let core4 = core.clone();
             tauri::async_runtime::spawn(async move {
