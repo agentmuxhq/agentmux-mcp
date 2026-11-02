@@ -20,6 +20,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ inputs.version }}
+      # An npm token (repo or org secret NPM_TOKEN) is used if present; otherwise Trusted Publishing.
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -27,7 +29,7 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
       # Trusted Publishing (OIDC): npm checks that this run comes from agentmuxhq/agentmux-mcp's
-      # npm-publish.yml, so no npm token is stored anywhere. Needs npm 11.5.1 or newer.
+      # npm-publish.yml, so no token is needed. Needs npm 11.5.1 or newer.
       - run: npm install -g npm@latest
       - name: Publish
         run: |
