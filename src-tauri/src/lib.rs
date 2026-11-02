@@ -556,9 +556,9 @@ pub fn run() {
             let core = Core::new()?;
             let paused = config::is_paused();
             let status = Arc::new(Mutex::new(if paused { "off" } else { "embedded" }.to_string()));
-            let switch = daemon::Switch::new(core.clone());
-
             let gateway = Gateway::new(core.clone());
+            // The app's daemon also answers `agentmux tunnel …` from the CLI.
+            let switch = daemon::Switch::with_gateway(core.clone(), gateway.clone());
             if paused {
                 gateway.set_paused(true); // turned off last time: stay off until the user turns it on
             } else {
@@ -627,15 +627,20 @@ pub fn run() {
                 }
             });
 
-            // If another AgentMux process held the socket ("external") and goes away, take over so the
-            // app doesn't stay a bystander.
+            // The "off" marker is the one switch, shared with `agentmux stop` / `agentmux start`: follow it.
+            // Also, if another AgentMux process held the socket ("external") and goes away, take over.
             let handle2 = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
                     let st = handle2.state::<AppState>();
-                    let external = st.daemon.lock().unwrap().as_str() == "external";
-                    if external && !config::is_paused() && tokio::net::UnixStream::connect(config::socket_path()).await.is_err() {
+                    let status = st.daemon.lock().unwrap().clone();
+                    let paused = config::is_paused();
+                    if paused && status != "off" {
+                        let _ = power(&handle2, false).await;
+                    } else if !paused && status == "off" {
+                        let _ = power(&handle2, true).await;
+                    } else if !paused && status == "external" && tokio::net::UnixStream::connect(config::socket_path()).await.is_err() {
                         let _ = power(&handle2, true).await;
                     }
                 }

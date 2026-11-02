@@ -9,7 +9,7 @@ V="${1:?usage: scripts/release.sh X.Y.Z}"
 [ "$(git rev-parse --abbrev-ref HEAD)" = main ] || { echo "release from main"; exit 1; }
 
 sed -i '' -E "s/^(  \"version\": )\"[^\"]+\"/\1\"$V\"/" src-tauri/tauri.conf.json package.json
-sed -i '' -E "s/^version = \"[^\"]+\"/version = \"$V\"/" src-tauri/Cargo.toml
+sed -i '' -E "s/^version = \"[^\"]+\"/version = \"$V\"/" src-tauri/Cargo.toml crates/agentmux-cli/Cargo.toml
 cargo update -w >/dev/null 2>&1 || true
 
 git commit -am "Release v$V"

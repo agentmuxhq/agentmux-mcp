@@ -23,7 +23,7 @@ fi
 
 # 1. Version bump (a no-op when the files already say $V).
 sed -i '' -E "s/^(  \"version\": )\"[^\"]+\"/\1\"$V\"/" src-tauri/tauri.conf.json package.json
-sed -i '' -E "s/^version = \"[^\"]+\"/version = \"$V\"/" src-tauri/Cargo.toml
+sed -i '' -E "s/^version = \"[^\"]+\"/version = \"$V\"/" src-tauri/Cargo.toml crates/agentmux-cli/Cargo.toml
 cargo update -w >/dev/null 2>&1 || true
 if [ -n "$(git status --porcelain)" ]; then git commit -qam "Release v$V"; fi
 

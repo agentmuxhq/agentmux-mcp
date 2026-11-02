@@ -1,4 +1,5 @@
 use crate::core::{CallerCtx, Core};
+use crate::gateway::Gateway;
 use crate::{config, mcp};
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
@@ -18,7 +19,13 @@ pub async fn serve(core: Arc<Core>) -> Result<()> {
 }
 
 /// Like `serve`, but stops (closing every connection and removing the socket) once `shutdown` flips to true.
-pub async fn serve_until(core: Arc<Core>, mut shutdown: watch::Receiver<bool>) -> Result<()> {
+pub async fn serve_until(core: Arc<Core>, shutdown: watch::Receiver<bool>) -> Result<()> {
+    serve_with(core, None, shutdown).await
+}
+
+/// `serve_until` plus a control channel for the tunnel (used by `agentmux tunnel …`) when this
+/// process also runs the HTTP gateway.
+pub async fn serve_with(core: Arc<Core>, gateway: Option<Arc<Gateway>>, mut shutdown: watch::Receiver<bool>) -> Result<()> {
     let dir = config::run_dir();
     std::fs::create_dir_all(&dir)?;
     #[cfg(unix)]
@@ -53,9 +60,9 @@ pub async fn serve_until(core: Arc<Core>, mut shutdown: watch::Receiver<bool>) -
             r = listener.accept() => r?,
             _ = shutdown.changed() => break,
         };
-        let (core, rx) = (core.clone(), shutdown.clone());
+        let (core, rx, gw) = (core.clone(), shutdown.clone(), gateway.clone());
         tokio::spawn(async move {
-            if let Err(e) = handle_conn(core, stream, rx).await {
+            if let Err(e) = handle_conn(core, gw, stream, rx).await {
                 tracing::debug!("connection ended: {e}");
             }
         });
@@ -68,12 +75,18 @@ pub async fn serve_until(core: Arc<Core>, mut shutdown: watch::Receiver<bool>) -
 /// The daemon embedded in the desktop app, with an on/off switch (the menu bar toggle).
 pub struct Switch {
     core: Arc<Core>,
+    gateway: Option<Arc<Gateway>>,
     running: std::sync::Mutex<Option<(watch::Sender<bool>, tokio::task::JoinHandle<Result<()>>)>>,
 }
 
 impl Switch {
     pub fn new(core: Arc<Core>) -> Arc<Self> {
-        Arc::new(Self { core, running: std::sync::Mutex::new(None) })
+        Arc::new(Self { core, gateway: None, running: std::sync::Mutex::new(None) })
+    }
+
+    /// Also answer tunnel control requests (`agentmux tunnel …`) for this gateway.
+    pub fn with_gateway(core: Arc<Core>, gateway: Arc<Gateway>) -> Arc<Self> {
+        Arc::new(Self { core, gateway: Some(gateway), running: std::sync::Mutex::new(None) })
     }
 
     pub fn is_on(&self) -> bool {
@@ -87,7 +100,7 @@ impl Switch {
         }
         let _ = std::fs::remove_file(config::paused_marker());
         let (tx, rx) = watch::channel(false);
-        let handle = tokio::spawn(serve_until(self.core.clone(), rx));
+        let handle = tokio::spawn(serve_with(self.core.clone(), self.gateway.clone(), rx));
         *self.running.lock().unwrap() = Some((tx, handle));
         for _ in 0..40 {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -120,13 +133,16 @@ impl Switch {
     }
 }
 
-async fn handle_conn(core: Arc<Core>, stream: UnixStream, mut shutdown: watch::Receiver<bool>) -> Result<()> {
+async fn handle_conn(core: Arc<Core>, gateway: Option<Arc<Gateway>>, stream: UnixStream, mut shutdown: watch::Receiver<bool>) -> Result<()> {
     let (r, mut w) = stream.into_split();
     let mut lines = BufReader::new(r).lines();
 
     // First line identifies the caller: {"agentmux_hello":{"agent","cwd","hop"}}
     let Some(first) = (tokio::select! { l = lines.next_line() => l?, _ = shutdown.changed() => return Ok(()) }) else { return Ok(()) };
     let hello: Value = serde_json::from_str(&first)?;
+    if hello.get("agentmux_control").is_some() {
+        return control(gateway, lines, w).await;
+    }
     let h = &hello["agentmux_hello"];
     let agent = h["agent"].as_str().unwrap_or("").to_string();
     if !(core.vault.is_agent(&agent) || agent == "user") {
@@ -167,5 +183,38 @@ async fn handle_conn(core: Arc<Core>, stream: UnixStream, mut shutdown: watch::R
     }
     drop(tx);
     let _ = writer.await;
+    Ok(())
+}
+
+/// One request per connection: `{"cmd": "tunnel.status" | "tunnel.start" | "tunnel.stop" | "tunnel.verify" | "ping"}`.
+/// Only reachable through the 0600 socket, i.e. by this macOS user.
+async fn control(
+    gateway: Option<Arc<Gateway>>,
+    mut lines: tokio::io::Lines<BufReader<tokio::net::unix::OwnedReadHalf>>,
+    mut w: tokio::net::unix::OwnedWriteHalf,
+) -> Result<()> {
+    let Some(line) = lines.next_line().await? else { return Ok(()) };
+    let req: Value = serde_json::from_str(&line).unwrap_or(Value::Null);
+    let cmd = req["cmd"].as_str().unwrap_or("");
+    let out = match (cmd, &gateway) {
+        ("ping", g) => json!({"ok": true, "result": {"gateway": g.is_some()}}),
+        (_, None) => json!({"ok": false, "error": "this AgentMux process doesn't run the tunnel"}),
+        ("tunnel.status", Some(g)) => json!({"ok": true, "result": g.status()}),
+        ("tunnel.start", Some(g)) => match g.start().await {
+            Ok(()) => json!({"ok": true, "result": g.status()}),
+            Err(e) => json!({"ok": false, "error": e.to_string()}),
+        },
+        ("tunnel.stop", Some(g)) => {
+            g.stop().await;
+            json!({"ok": true, "result": g.status()})
+        }
+        ("tunnel.verify", Some(g)) => match g.verify().await {
+            Ok(m) => json!({"ok": true, "result": m}),
+            Err(e) => json!({"ok": false, "error": e.to_string()}),
+        },
+        _ => json!({"ok": false, "error": format!("unknown command '{cmd}'")}),
+    };
+    w.write_all(format!("{out}\n").as_bytes()).await?;
+    let _ = w.shutdown().await;
     Ok(())
 }

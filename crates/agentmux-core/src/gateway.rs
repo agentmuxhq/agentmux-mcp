@@ -160,8 +160,18 @@ impl Gateway {
         self.tokens.lock().unwrap().remove(agent);
     }
 
-    /// Which bot owns this bearer token? Existing tokens only; nothing is created here.
+    /// Which bot owns this bearer token? Existing tokens only; nothing is created here. If nothing
+    /// matches, the keychain is read again once, so a token rotated by another process (the CLI)
+    /// takes effect without a restart.
     fn identify(&self, presented: &str) -> Option<String> {
+        if let Some(a) = self.identify_once(presented) {
+            return Some(a);
+        }
+        self.tokens.lock().unwrap().clear();
+        self.identify_once(presented)
+    }
+
+    fn identify_once(&self, presented: &str) -> Option<String> {
         let bots: Vec<String> = self
             .core
             .vault
@@ -194,6 +204,11 @@ impl Gateway {
     pub fn set_paused(&self, on: bool) {
         self.paused.store(on, std::sync::atomic::Ordering::SeqCst);
         self.emit();
+    }
+
+    /// Whether the HTTP endpoint is listening (it may wait for another AgentMux process to free the port).
+    pub fn http_bound(&self) -> bool {
+        self.http.lock().unwrap().is_some()
     }
 
     pub fn paused(&self) -> bool {
