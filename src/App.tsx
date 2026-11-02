@@ -19,6 +19,7 @@ import { Avatar, Badge, Dot, btn, btnPrimary } from "./components/ui";
 import ConnectModal from "./components/ConnectModal";
 import NewRoomModal from "./components/NewRoomModal";
 import Starter from "./components/Starter";
+import Markdown from "./components/Markdown";
 import { UpdateRow } from "./components/UpdateControls";
 import PublicAccessCard from "./components/PublicAccessCard";
 import SettingsModal from "./components/SettingsModal";
@@ -59,7 +60,11 @@ function MessageRow({ m }: { m: Message }) {
           {m.type === "a2a_reply" && <Badge tone="green">reply</Badge>}
           {system && <Badge tone="red">error</Badge>}
         </div>
-        <div className={`mt-1 select-text whitespace-pre-wrap break-words text-[13px] leading-relaxed ${system ? "text-red-300" : "text-zinc-200"}`}>{m.text}</div>
+        {system ? (
+          <div className="mt-1 select-text whitespace-pre-wrap break-words text-[13px] leading-relaxed text-red-300">{m.text}</div>
+        ) : (
+          <Markdown text={m.text} className="mt-1 text-[13px] leading-relaxed text-zinc-200" />
+        )}
         {m.codeBlock && <pre className="mt-2 select-text overflow-x-auto rounded-md border border-white/10 bg-black/40 p-3 font-mono text-[11px] text-zinc-300">{m.codeBlock}</pre>}
       </div>
     </div>
