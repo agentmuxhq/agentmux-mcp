@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = ["crates/agentmux-core", "crates/agentmux-cli", "src-tauri"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

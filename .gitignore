@@ -1,0 +1,14 @@
+# Build output
+target/
+dist/
+node_modules/
+src-tauri/gen/schemas/
+src-tauri/binaries/
+
+# Local secrets and machine files (never commit)
+.env*
+*.key
+*.key.pub
+*.pem
+.DS_Store
+.claude/

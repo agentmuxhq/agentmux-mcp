@@ -1,0 +1,48 @@
+name: Release
+
+# Push a tag like v0.1.1 (scripts/release.sh does this) and unsigned macOS builds,
+# the updater manifest (latest.json) and a GitHub release are produced automatically.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+          - target: x86_64-apple-darwin
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: AgentMux ${{ github.ref_name }}
+          releaseBody: |
+            Unsigned macOS build. On first launch macOS will block it:
+            open **System Settings → Privacy & Security → Open Anyway**, or run
+            `xattr -dr com.apple.quarantine /Applications/AgentMux.app`.
+
+            Pick `aarch64` for Apple Silicon (M1 and later) or `x64` for Intel Macs.
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
+          args: --target ${{ matrix.target }}
