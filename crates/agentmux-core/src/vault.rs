@@ -496,6 +496,16 @@ impl Vault {
         Ok(n > 0)
     }
 
+    /// Tickets still waiting for an answer.
+    pub fn open_tickets(&self) -> Result<Vec<Value>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT id, sender, recipient, status, created_at FROM tickets WHERE status IN ('pending','running')")?;
+        let rows = st.query_map([], |r| {
+            Ok(json!({"id": r.get::<_, String>(0)?, "from": r.get::<_, String>(1)?, "to": r.get::<_, String>(2)?, "status": r.get::<_, String>(3)?, "createdAt": r.get::<_, String>(4)?}))
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
     pub fn ticket(&self, id: &str) -> Result<Option<Value>> {
         let c = self.conn.lock().unwrap();
         Ok(c.query_row(

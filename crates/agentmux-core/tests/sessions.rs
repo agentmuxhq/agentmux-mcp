@@ -74,3 +74,29 @@ async fn empty_session_is_reused_and_handoffs_stay_put() {
     let handoff = inbox.iter().find(|x| x["from"] == "grok").expect("handoff ticket to cursor");
     assert_eq!(session_of(&core, handoff["ticket"].as_str().unwrap()), fresh);
 }
+
+#[test]
+fn asking_outside_the_async_runtime_fails_cleanly() {
+    // The desktop app once called this from a plain thread: the ticket was created but its wake never
+    // started, leaving a question that stayed open forever. It must refuse before creating anything.
+    let (core, ws) = test_core("noruntime");
+    let err = core.start_ticket(&ctx("user", &ws), None, "claude", "hello?", None).unwrap_err().to_string();
+    assert!(err.contains("async runtime"), "{err}");
+    assert!(core.vault.open_tickets().unwrap().is_empty(), "no orphan ticket may be left behind");
+}
+
+#[tokio::test]
+async fn orphaned_wake_tickets_are_swept_but_inbox_ones_are_kept() {
+    let (core, ws) = test_core("sweep");
+    unsafe { std::env::set_var("AGENTMUX_WAKE_TIMEOUT_SECS", "0") };
+    let room_sess = core.vault.ensure_room(&ws, "main").unwrap();
+    let (room, sess) = (room_sess.0, room_sess.1);
+    // A CLI-woken agent whose wake never ran, and an inbox-only agent that simply hasn't looked yet.
+    let stuck = core.vault.create_ticket(&sess, &room, "user", "claude", "anyone?", 1, None).unwrap();
+    let inbox = core.vault.create_ticket(&sess, &room, "cursor", "grok", "whenever", 1, None).unwrap();
+    assert_eq!(core.sweep_stale_after(-1), 1);
+    assert_eq!(core.vault.ticket(&stuck).unwrap().unwrap()["status"], "expired");
+    assert_eq!(core.vault.ticket(&inbox).unwrap().unwrap()["status"], "pending");
+    // The pair is free again, so the user can ask once more.
+    assert!(!core.vault.open_ticket_between("user", "claude").unwrap());
+}

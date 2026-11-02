@@ -142,6 +142,9 @@ impl Core {
         question: &str,
         then: Option<String>,
     ) -> Result<String> {
+        // The wake runs as a background task, so this must be called inside the async runtime. Checking
+        // first means a caller outside it gets an error instead of a ticket that is never woken.
+        let rt = tokio::runtime::Handle::try_current().map_err(|_| anyhow!("internal error: asking an agent must run inside the async runtime"))?;
         let to = self.resolve_agent(to)?;
         let to = to.as_str();
         if to == ctx.agent {
@@ -196,7 +199,7 @@ impl Core {
 
         let core = self.clone();
         let t = ticket.clone();
-        tokio::spawn(async move { core.run_ticket(t).await });
+        rt.spawn(async move { core.run_ticket(t).await });
         Ok(ticket)
     }
 
@@ -323,6 +326,41 @@ impl Core {
             }
         }
         Ok(true)
+    }
+
+    /// Close questions that were never going to be answered: the recipient is woken by AgentMux (CLI or
+    /// webhook), the wake window has long passed, and nothing finished the ticket (the app was restarted
+    /// or the wake never started). Without this they stay open and block the next question to that agent.
+    pub fn sweep_stale(self: &Arc<Self>) -> usize {
+        self.sweep_stale_after(60)
+    }
+
+    pub fn sweep_stale_after(self: &Arc<Self>, grace_secs: i64) -> usize {
+        let kinds: std::collections::HashMap<String, String> = self
+            .vault
+            .providers()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|p| Some((p["id"].as_str()?.to_string(), p["wakeKind"].as_str()?.to_string())))
+            .collect();
+        let now = chrono::Utc::now();
+        let mut n = 0;
+        for t in self.vault.open_tickets().unwrap_or_default() {
+            let (Some(id), Some(to), Some(made)) = (t["id"].as_str(), t["to"].as_str(), t["createdAt"].as_str()) else { continue };
+            let window = match kinds.get(to).map(String::as_str) {
+                Some("cli") => config::wake_timeout_secs(),
+                Some("webhook") => config::webhook_timeout_secs(),
+                _ => continue, // inbox-only agents answer whenever they next look
+            };
+            let Ok(made) = chrono::DateTime::parse_from_rfc3339(made) else { continue };
+            if (now - made.with_timezone(&chrono::Utc)).num_seconds() > window as i64 + grace_secs {
+                let msg = "No answer arrived and the wake isn't running (AgentMux may have restarted). Ask again.";
+                if self.finish(id, "expired", msg, None).unwrap_or(false) {
+                    n += 1;
+                }
+            }
+        }
+        n
     }
 
     /// Wait up to `wait_s` for a ticket to leave pending/running; returns its final or current state.

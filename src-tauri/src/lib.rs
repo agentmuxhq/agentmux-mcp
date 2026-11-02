@@ -113,7 +113,7 @@ fn get_messages(state: State<'_, AppState>, session_id: String) -> Result<Value,
 
 /// Send a message as the human user to an agent; the reply arrives as a `mux://event`.
 #[tauri::command]
-fn send_message(
+async fn send_message(
     state: State<'_, AppState>,
     room: String,
     session: Option<String>,
@@ -129,7 +129,7 @@ fn send_message(
 
 /// Full wake -> reply round trip against one provider, in a scratch room.
 #[tauri::command]
-fn ping_provider(state: State<'_, AppState>, id: String) -> Result<String, String> {
+async fn ping_provider(state: State<'_, AppState>, id: String) -> Result<String, String> {
     let dir = config::home().join("selftest");
     std::fs::create_dir_all(&dir).map_err(err)?;
     state
@@ -624,6 +624,16 @@ pub fn run() {
                         }
                     }
                     tokio::time::sleep(std::time::Duration::from_secs(6 * 3600)).await;
+                }
+            });
+
+            // Close questions whose wake never started or died with an earlier run of the app.
+            let core4 = core.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+                loop {
+                    core4.sweep_stale();
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
                 }
             });
 
