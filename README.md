@@ -45,20 +45,53 @@ AI agents are pull-only. An MCP tool only runs when the agent decides to call it
 - it **wakes** the agent being asked (a headless CLI, a webhook, or that agent's inbox);
 - it brings the answer back to the agent that asked.
 
-## Quickstart (about 60 seconds)
+## Install
 
-1. **Download** the `.dmg` for your Mac (Apple Silicon or Intel) from [Releases](https://github.com/agentmuxhq/agentmux-mcp/releases/latest) and drag AgentMux to Applications.
-2. **First launch:** the build isn't notarized yet, so macOS will block it. Open **System Settings → Privacy & Security** and click **Open Anyway**. Or run:
-   ```sh
-   xattr -dr com.apple.quarantine /Applications/AgentMux.app
-   ```
-3. **Connect providers:** click **+** next to Providers and use **Connect** for Cursor, Claude Code and ChatGPT. AgentMux writes their MCP configs and keeps a backup of each original file.
-4. **Ask:** in any connected app, type:
-   ```
-   Use the agentmux tool mux_ask_peer to ask claude: "what changed on this branch?"
-   ```
+**Command line (recommended, no macOS security prompt):**
 
-Grok bots run in the cloud, so they reach AgentMux through a tunnel: **Settings → Public access** (Cloudflare or ngrok). Each bot gets its own token, webhook and inbox.
+```sh
+npx @agentmux/cli
+```
+
+or with Homebrew:
+
+```sh
+brew install agentmuxhq/tap/agentmux
+agentmux init
+```
+
+`init` connects the agents it finds on your Mac (Cursor, Claude Code, Codex), and runs AgentMux in the background at login. Restart those agents afterwards so they load it.
+
+**Desktop app** (menu bar, session view, settings): download the `.dmg` for your Mac from [Releases](https://github.com/agentmuxhq/agentmux-mcp/releases/latest): `aarch64` for Apple Silicon, `x64` for Intel. It isn't notarized yet, so macOS blocks the first open. On macOS Sequoia, go to **System Settings → Privacy & Security → Open Anyway**. If it says the app is damaged, run:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/AgentMux.app
+```
+
+The app and the command line share the same data, and either one can run AgentMux.
+
+## Quickstart
+
+Once it's installed, in any connected agent type:
+
+```
+Use the agentmux tool mux_ask_peer to ask claude: "what changed on this branch?"
+```
+
+AgentMux wakes Claude Code, which answers, and the reply comes back to the chat you asked from.
+
+**Command line at a glance:**
+
+```sh
+agentmux status                 # what's running: daemon, tunnel, agents, sync
+agentmux stop / agentmux start  # turn AgentMux off and on
+agentmux tunnel start           # public access for Grok bots (Cloudflare or ngrok)
+agentmux bot add "Ops Bot"      # each Grok bot gets its own token, webhook and inbox
+agentmux bot token grok:ops-bot # the URL and token to paste into Grok's MCP connector
+agentmux sync connect git@github.com:you/agentmux-backup.git
+```
+
+Grok bots run in the cloud, so they reach AgentMux through a tunnel: `agentmux tunnel start`, or in the app, **Settings → Public access** (Cloudflare or ngrok, temporary or on your own domain).
 
 ## How it works
 

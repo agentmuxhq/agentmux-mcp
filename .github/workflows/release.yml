@@ -56,11 +56,11 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: AgentMux ${{ github.ref_name }}
           releaseBody: |
-            Unsigned macOS build. On first launch macOS will block it:
-            open **System Settings → Privacy & Security → Open Anyway**, or run
-            `xattr -dr com.apple.quarantine /Applications/AgentMux.app`.
+            **Install** (no Gatekeeper warning): `npx @agentmux/cli` or `brew install agentmuxhq/tap/agentmux`
 
-            Pick `aarch64` for Apple Silicon (M1 and later) or `x64` for Intel Macs.
+            **Desktop app:** download the `.dmg` below: `aarch64` for Apple Silicon (M1 and later), `x64` for Intel.
+            It isn't notarized yet, so macOS blocks the first open: go to **System Settings → Privacy & Security → Open Anyway**,
+            or if it says the app is damaged, run `xattr -dr com.apple.quarantine /Applications/AgentMux.app`.
           # Both Mac builds upload into one draft; it is published only once both succeed, so users
           # (and the in-app updater) never see a half-finished release.
           releaseDraft: true
@@ -68,11 +68,110 @@ jobs:
           includeUpdaterJson: true
           args: --target ${{ matrix.target }}
 
-  publish:
+  # The command-line build (agentmux) for npm and Homebrew, attached to the same draft release.
+  cli:
     needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            arch: arm64
+          - target: x86_64-apple-darwin
+            arch: x64
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cli-${{ matrix.target }}
+      - run: cargo build --release -p agentmux-cli --target ${{ matrix.target }}
+      - name: Package and attach
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          F="agentmux-cli-$V-darwin-${{ matrix.arch }}.tar.gz"
+          tar -czf "$F" -C "target/${{ matrix.target }}/release" agentmux
+          shasum -a 256 "$F" | cut -d' ' -f1 > "$F.sha256"
+          gh release upload "$GITHUB_REF_NAME" "$F" "$F.sha256" --repo "$GITHUB_REPOSITORY" --clobber
+
+  publish:
+    needs: [build, cli]
     runs-on: ubuntu-latest
     steps:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release edit "${{ github.ref_name }}" --repo "${{ github.repository }}" --draft=false --latest
+
+  # npm: @agentmux/cli plus one package per Mac type. Skipped until the NPM_TOKEN secret exists.
+  npm:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Check for the npm token
+        id: token
+        run: |
+          if [ -n "$NODE_AUTH_TOKEN" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; else
+            echo "ok=false" >> "$GITHUB_OUTPUT"; echo "::warning::NPM_TOKEN is not set; skipping npm publish."; fi
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.ok == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.token.outputs.ok == 'true'
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - name: Publish
+        if: steps.token.outputs.ok == 'true'
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          mkdir -p dl/arm64 dl/x64
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" -p "agentmux-cli-$V-darwin-*.tar.gz" -D dl
+          tar -xzf "dl/agentmux-cli-$V-darwin-arm64.tar.gz" -C dl/arm64
+          tar -xzf "dl/agentmux-cli-$V-darwin-x64.tar.gz" -C dl/x64
+          bash scripts/npm-packages.sh "$V" dl/arm64/agentmux dl/x64/agentmux out
+          for P in cli-darwin-arm64 cli-darwin-x64 cli; do
+            npm publish "out/$P" --access public --provenance
+          done
+
+  # Homebrew: updates agentmuxhq/homebrew-tap. Skipped until the HOMEBREW_TAP_TOKEN secret exists.
+  homebrew:
+    needs: publish
+    runs-on: ubuntu-latest
+    env:
+      TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Check for the tap token
+        id: token
+        run: |
+          if [ -n "$TAP_TOKEN" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; else
+            echo "ok=false" >> "$GITHUB_OUTPUT"; echo "::warning::HOMEBREW_TAP_TOKEN is not set; skipping the Homebrew update."; fi
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.ok == 'true'
+      - name: Update the formula
+        if: steps.token.outputs.ok == 'true'
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" -p "agentmux-cli-$V-darwin-*.tar.gz.sha256" -D sums
+          ARM=$(cat "sums/agentmux-cli-$V-darwin-arm64.tar.gz.sha256")
+          X64=$(cat "sums/agentmux-cli-$V-darwin-x64.tar.gz.sha256")
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/agentmuxhq/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          bash scripts/brew-formula.sh "$V" "$ARM" "$X64" > tap/Formula/agentmux.rb
+          cd tap
+          git config user.name "agentmux-release"
+          git config user.email "release@agentmux.dev"
+          git add Formula/agentmux.rb
+          git commit -m "agentmux $V" || { echo "formula unchanged"; exit 0; }
+          git push
