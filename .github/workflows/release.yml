@@ -61,7 +61,18 @@ jobs:
             `xattr -dr com.apple.quarantine /Applications/AgentMux.app`.
 
             Pick `aarch64` for Apple Silicon (M1 and later) or `x64` for Intel Macs.
-          releaseDraft: false
+          # Both Mac builds upload into one draft; it is published only once both succeed, so users
+          # (and the in-app updater) never see a half-finished release.
+          releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
           args: --target ${{ matrix.target }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "${{ github.ref_name }}" --repo "${{ github.repository }}" --draft=false --latest
