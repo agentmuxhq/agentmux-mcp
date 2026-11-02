@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Runs the native AgentMux binary for this Mac (shipped in @agentmux/cli-darwin-arm64 / -x64).
-// `npx @agentmux/cli` with no arguments sets AgentMux up (`agentmux init`).
+// Runs the native AgentMux binary for this Mac (shipped in @agentmuxhq/cli-darwin-arm64 / -x64).
+// `npx @agentmuxhq/cli` with no arguments sets AgentMux up (`agentmux init`).
 "use strict";
 const { spawnSync } = require("node:child_process");
 
@@ -15,9 +15,9 @@ if (!arch) {
 }
 let bin;
 try {
-  bin = require.resolve(`@agentmux/cli-darwin-${arch}/bin/agentmux`);
+  bin = require.resolve(`@agentmuxhq/cli-darwin-${arch}/bin/agentmux`);
 } catch {
-  console.error(`The AgentMux binary for ${arch} Macs is missing. Reinstall with: npm install -g @agentmux/cli`);
+  console.error(`The AgentMux binary for ${arch} Macs is missing. Reinstall with: npm install -g @agentmuxhq/cli`);
   process.exit(1);
 }
 let args = process.argv.slice(2);

@@ -50,7 +50,7 @@ AI agents are pull-only. An MCP tool only runs when the agent decides to call it
 **Command line (recommended, no macOS security prompt):**
 
 ```sh
-npx @agentmux/cli
+npx @agentmuxhq/cli
 ```
 
 or with Homebrew:

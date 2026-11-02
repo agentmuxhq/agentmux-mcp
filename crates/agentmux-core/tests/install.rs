@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 fn npx_copies_brew_uses_the_stable_prefix_and_apps_link_directly() {
     // Safe: single test in this file.
     unsafe { std::env::set_var("AGENTMUX_HOME", "/tmp/amx-install-test") };
-    let (t, copy) = stable_target(Path::new("/Users/me/.npm/_npx/1a2b/node_modules/@agentmux/cli-darwin-arm64/bin/agentmux"));
+    let (t, copy) = stable_target(Path::new("/Users/me/.npm/_npx/1a2b/node_modules/@agentmuxhq/cli-darwin-arm64/bin/agentmux"));
     assert!(copy, "the npx cache gets cleaned, so the binary must be copied");
     assert_eq!(t, PathBuf::from("/tmp/amx-install-test/bin/agentmux-cli"));
 

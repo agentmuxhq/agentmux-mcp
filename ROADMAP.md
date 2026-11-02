@@ -17,7 +17,7 @@ AgentMux is open source and local-first. The free app will always do everything 
 - [x] **Git sync (free):** back up rooms, notes and setup to your own private GitHub or GitLab repo (Settings → Sync). Secrets are never committed, and diffs are optional
 - [ ] A per-room switch to stop sharing the git diff
 - [ ] A live git-diff watcher
-- [ ] One-command install for the CLI and daemon (`@agentmux/cli` on npm, Homebrew), and a Docker image for self-hosters
+- [ ] One-command install for the CLI and daemon (`@agentmuxhq/cli` on npm, Homebrew), and a Docker image for self-hosters
 - [ ] Publish to the official MCP Registry (`dev.agentmux/*`)
 - [ ] Public MCP endpoint at `mcp.agentmux.dev`
 - [ ] Notarized macOS builds

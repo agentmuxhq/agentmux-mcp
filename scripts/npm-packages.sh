@@ -14,9 +14,9 @@ for A in arm64 x64; do
   cp "$SRC" "$D/bin/agentmux"; chmod 755 "$D/bin/agentmux"
   cat > "$D/package.json" <<JSON
 {
-  "name": "@agentmux/cli-darwin-$A",
+  "name": "@agentmuxhq/cli-darwin-$A",
   "version": "$V",
-  "description": "AgentMux binary for $A Macs. Install @agentmux/cli instead.",
+  "description": "AgentMux binary for $A Macs. Install @agentmuxhq/cli instead.",
   "os": ["darwin"],
   "cpu": ["$A"],
   "files": ["bin/agentmux"],
@@ -25,7 +25,7 @@ for A in arm64 x64; do
   "homepage": "https://agentmux.dev"
 }
 JSON
-  printf '# @agentmux/cli-darwin-%s\n\nThe AgentMux binary for %s Macs, installed automatically by [@agentmux/cli](https://www.npmjs.com/package/@agentmux/cli).\n' "$A" "$A" > "$D/README.md"
+  printf '# @agentmuxhq/cli-darwin-%s\n\nThe AgentMux binary for %s Macs, installed automatically by [@agentmuxhq/cli](https://www.npmjs.com/package/@agentmuxhq/cli).\n' "$A" "$A" > "$D/README.md"
 done
 
 D="$OUT/cli"; mkdir -p "$D/bin"
@@ -33,7 +33,7 @@ cp npm/cli/bin/agentmux.js "$D/bin/agentmux.js"; chmod 755 "$D/bin/agentmux.js"
 cp npm/cli/README.md "$D/README.md"; cp LICENSE "$D/LICENSE"
 cat > "$D/package.json" <<JSON
 {
-  "name": "@agentmux/cli",
+  "name": "@agentmuxhq/cli",
   "version": "$V",
   "description": "Let your AI agents message each other: one local MCP server for Cursor, Claude Code, Codex and Grok bots (macOS).",
   "bin": { "agentmux": "bin/agentmux.js" },
@@ -41,8 +41,8 @@ cat > "$D/package.json" <<JSON
   "os": ["darwin"],
   "engines": { "node": ">=18" },
   "optionalDependencies": {
-    "@agentmux/cli-darwin-arm64": "$V",
-    "@agentmux/cli-darwin-x64": "$V"
+    "@agentmuxhq/cli-darwin-arm64": "$V",
+    "@agentmuxhq/cli-darwin-x64": "$V"
   },
   "keywords": ["mcp", "model-context-protocol", "a2a", "agents", "cursor", "claude-code", "codex", "grok"],
   "license": "Apache-2.0",
