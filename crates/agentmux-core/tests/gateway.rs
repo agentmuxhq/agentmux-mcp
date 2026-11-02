@@ -119,7 +119,8 @@ wait"#,
     assert_eq!(ok.json::<Value>().await.unwrap()["result"]["serverInfo"]["name"], "agentmux");
     assert_eq!(rpc(&c, None, Some(TOKEN), json!({"jsonrpc":"2.0","method":"notifications/initialized"})).await.status(), 202);
 
-    // ── scope: only the answering tools ──
+    // ── scope: with "start conversations" switched off, only the answering tools ──
+    core.vault.set_can_ask("grok", false).unwrap();
     let list = rpc(&c, None, Some(TOKEN), json!({"jsonrpc":"2.0","id":2,"method":"tools/list"})).await.json::<Value>().await.unwrap();
     let mut names: Vec<&str> = list["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
     names.sort();
@@ -164,15 +165,16 @@ wait"#,
     let me = core.vault.providers().unwrap().into_iter().find(|p| p["id"] == bot.as_str()).unwrap();
     assert_eq!(me["name"], "Job Hunter Pro");
     assert_eq!(me["registered"], true);
-    assert_eq!(rpc(&c, None, Some(TOKEN2), call("mux_ask_peer", json!({"to":"claude","question":"x"}))).await.json::<Value>().await.unwrap()["result"]["isError"], true);
+    assert!(core.vault.can_ask(&bot), "on by default for a new bot");
+    core.vault.set_can_ask(&bot, false).unwrap();
+    assert_eq!(rpc(&c, None, Some(TOKEN2), call("mux_ask_peer", json!({"to":"claude","question":"x"}))).await.json::<Value>().await.unwrap()["result"]["isError"], true, "switched off: answer-only");
     let ok2 = rpc(&c, None, Some(TOKEN2), call("mux_reply", json!({"ticket": t_bot, "text": "mine"}))).await.json::<Value>().await.unwrap();
     assert_ne!(ok2["result"]["isError"], true);
     assert_eq!(core.wait_ticket(&t_bot, 1).await.unwrap()["answer"], "mine");
 
     // ── a bot can start conversations only when it's switched on ──
-    assert!(!core.vault.can_ask(&bot));
     let off = rpc(&c, None, Some(TOKEN2), call("mux_ask_peer", json!({"to": "Grok Bot", "question": "hello?"}))).await.json::<Value>().await.unwrap();
-    assert_eq!(off["result"]["isError"], true, "off by default");
+    assert_eq!(off["result"]["isError"], true, "switched off, it can only answer");
     core.vault.set_can_ask(&bot, true).unwrap();
     assert!(core.vault.set_can_ask("cursor", true).is_err(), "only Grok bots have this switch");
     let list2 = rpc(&c, None, Some(TOKEN2), json!({"jsonrpc":"2.0","id":4,"method":"tools/list"})).await.json::<Value>().await.unwrap();

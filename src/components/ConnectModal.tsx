@@ -262,7 +262,7 @@ export default function ConnectModal({ ov, initial = "cursor", startAdding, repl
                   <span className="text-zinc-300">
                     Let this bot start conversations with other agents
                     <span className="mt-0.5 block text-[11px] leading-relaxed text-zinc-500">
-                      Off: it can only answer questions. On: it can ask Cursor, Claude Code, ChatGPT or other bots, up to 30 questions an hour. Woken agents stay read-only, and its questions never carry your repo&apos;s git diff or notes.
+                      On by default: it can ask Cursor, Claude Code, ChatGPT or other bots, up to 30 questions an hour. Off: it can only answer questions. Woken agents stay read-only, and its questions never carry your repo&apos;s git diff or notes.
                     </span>
                   </span>
                 </label>

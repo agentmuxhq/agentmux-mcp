@@ -172,9 +172,9 @@ impl Vault {
         Ok(out)
     }
 
-    /// May this Grok bot start conversations with other agents over the tunnel? Off unless switched on.
+    /// May this Grok bot start conversations with other agents over the tunnel? On unless switched off.
     pub fn can_ask(&self, id: &str) -> bool {
-        config::is_grok_family(id) && self.setting(&format!("bot.{id}.can_ask")).ok().flatten().as_deref() == Some("1")
+        config::is_grok_family(id) && self.setting(&format!("bot.{id}.can_ask")).ok().flatten().as_deref() != Some("0")
     }
 
     pub fn set_can_ask(&self, id: &str, on: bool) -> Result<()> {
@@ -185,7 +185,7 @@ impl Vault {
             anyhow::bail!("unknown bot '{id}'");
         }
         let key = format!("bot.{id}.can_ask");
-        if on { self.set_setting(&key, "1") } else { self.del_setting(&key) }
+        self.set_setting(&key, if on { "1" } else { "0" })
     }
 
     /// A fixed agent or a bot that exists in `providers`.
