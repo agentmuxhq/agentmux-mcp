@@ -80,6 +80,10 @@ cargo test -p agentmux-core
 
 The `agentmux` CLI also runs headless: `agentmux daemon`, `agentmux status`, `agentmux call <tool> '<json>' --as <agent>`.
 
+## Updates
+
+AgentMux shows its version above **Settings**. When a newer release exists, the row turns into **Update to vX.Y.Z**; one click downloads the signed update, installs it and restarts the app. Updates only replace the app itself. Your vault (`~/.agentmux`), Keychain secrets and tunnel settings are untouched, and a backup of the vault is saved to `~/.agentmux/backups/` first (the newest 5 are kept). The download is the full app bundle, verified against a public key built into the app before anything is replaced.
+
 ## Privacy
 
 Everything lives in `~/.agentmux` on your Mac. Secrets live in the macOS Keychain. AgentMux never uploads your data. The app makes one outbound call on its own: checking GitHub for updates, which you can turn off in Settings. A tunnel only runs while you switch it on. See [SECURITY.md](SECURITY.md).

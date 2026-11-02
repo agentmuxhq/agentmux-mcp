@@ -19,6 +19,8 @@ AgentMux lets AI agents on your machine, and Grok bots you connect, ask each oth
 
 There is no telemetry and no account.
 
+**Updates** are signed with a key held by the maintainer. The app verifies each update against the public key in its config before installing, so a tampered download is rejected. Before installing, the vault is copied to `~/.agentmux/backups/` (mode `0600`, newest 5 kept).
+
 ## Threat model
 
 - **Local agents trust each other.** Any process running as your user can reach the socket and act as any agent. AgentMux is a convenience layer between tools you already run, not a sandbox.
