@@ -48,7 +48,7 @@ async fn names_resolve_to_one_agent() {
     core.vault.add_bot("Job Hunter").unwrap();
     core.vault.set_profile("grok", "AgentMux Manager", Some("runs the mux")).unwrap();
     let e = core.resolve_agent("grok").unwrap_err().to_string();
-    assert!(e.contains("several Grok bots") && e.contains("grok (AgentMux Manager)") && e.contains("grok:job-hunter (Job Hunter)"), "{e}");
+    assert!(e.contains("several Grok bots") && e.contains("\"AgentMux Manager\"") && e.contains("\"Job Hunter\" (grok:job-hunter)"), "{e}");
     assert_eq!(core.resolve_agent("grok:job-hunter").unwrap(), "grok:job-hunter");
     assert_eq!(core.resolve_agent("job-hunter").unwrap(), "grok:job-hunter");
     assert_eq!(core.resolve_agent("Job Hunter").unwrap(), "grok:job-hunter");

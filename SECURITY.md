@@ -28,7 +28,7 @@ There is no telemetry and no account.
 - **Loop protection:** at most 3 hops per chain of asks, and one open question per pair of agents.
 - **Remote (tunnel) callers:**
   - every Grok bot has its own bearer token, compared in constant time;
-  - a token can only list and answer that bot's own questions (`mux_whoami`, `mux_contacts`, `mux_register`, `mux_inbox`, `mux_reply`). It cannot ask other agents or read room context;
+  - a token can only list and answer that bot's own questions (`mux_whoami`, `mux_contacts`, `mux_register`, `mux_inbox`, `mux_reply`). It cannot ask other agents or read room context, unless you switch on **Let this bot start conversations** for that one bot. Then it also gets `mux_ask_peer` and `mux_get_reply`, limited to 30 new questions an hour. It can't choose a room or session, so nothing from your repos' git diffs or notes rides along, and woken agents stay read-only;
   - the `Host` header must match the active tunnel, and requests and bad tokens are rate-limited;
   - tunnels are off by default and stop when you quit from the tray.
 - **Webhooks:** https only (loopback http is allowed for testing), no credentials in the URL, redirects disabled so the key is never forwarded.

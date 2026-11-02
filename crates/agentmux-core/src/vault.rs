@@ -150,7 +150,30 @@ impl Vault {
                 "registered": r.get::<_, Option<i64>>(8)?.unwrap_or(0) != 0,
             }))
         })?;
-        Ok(rows.collect::<std::result::Result<_, _>>()?)
+        let mut out: Vec<Value> = rows.collect::<std::result::Result<_, _>>()?;
+        drop(st);
+        drop(c);
+        for p in out.iter_mut() {
+            let id = p["id"].as_str().unwrap_or("").to_string();
+            p["canAsk"] = json!(self.can_ask(&id));
+        }
+        Ok(out)
+    }
+
+    /// May this Grok bot start conversations with other agents over the tunnel? Off unless switched on.
+    pub fn can_ask(&self, id: &str) -> bool {
+        config::is_grok_family(id) && self.setting(&format!("bot.{id}.can_ask")).ok().flatten().as_deref() == Some("1")
+    }
+
+    pub fn set_can_ask(&self, id: &str, on: bool) -> Result<()> {
+        if !config::is_grok_family(id) {
+            anyhow::bail!("only Grok bots use this setting");
+        }
+        if !self.is_agent(id) {
+            anyhow::bail!("unknown bot '{id}'");
+        }
+        let key = format!("bot.{id}.can_ask");
+        if on { self.set_setting(&key, "1") } else { self.del_setting(&key) }
     }
 
     /// A fixed agent or a bot that exists in `providers`.
@@ -207,6 +230,7 @@ impl Vault {
         let c = self.conn.lock().unwrap();
         c.execute("DELETE FROM providers WHERE id = ?1", params![id])?;
         c.execute("DELETE FROM room_members WHERE provider_id = ?1", params![id])?;
+        c.execute("DELETE FROM settings WHERE key = ?1", params![format!("bot.{id}.can_ask")])?;
         Ok(())
     }
 

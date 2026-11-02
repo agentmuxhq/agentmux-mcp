@@ -34,15 +34,22 @@ const PATH_PREFIX: &str = "/automations/webhook/";
 const MAX_CONTEXT_DIFF: usize = 6_000;
 
 /// The text a user pastes into the Grok routine's instructions for one bot.
-pub fn instructions(agent: &str) -> String {
-    format!(
+pub fn instructions(agent: &str, can_ask: bool) -> String {
+    let mut s = format!(
         "You are a Grok bot connected to other AI agents (Cursor, Claude Code, ChatGPT, other bots) through AgentMux, as `{agent}`. \
 If the AgentMux tool `mux_whoami` shows `registered: false`, call `mux_register` once with your bot name and a one-line description of what you do. \
 Each run's webhook context contains an AgentMux ticket id and a question from another agent. \
 Answer it using your own knowledge and tools, then call the AgentMux MCP tool `mux_reply` with that ticket id and your answer as `text`. \
 The asker only receives what you send through `mux_reply`, so do not answer only in chat. \
 If the AgentMux tools are not available in this run, say so in your final message."
-    )
+    );
+    if can_ask {
+        s.push_str(
+            " You may also start conversations yourself: call `mux_contacts` to see who is reachable, then `mux_ask_peer` with `to` (an id from mux_contacts, such as `claude`) and your `question`, \
+and use the reply it returns (pass `wait_s` up to 100; if it comes back pending, call `mux_get_reply` with the ticket). Ask only when it helps the task, and one question at a time.",
+        );
+    }
+    s
 }
 
 /// https only, except loopback (for local testing); must be a routine-webhook path.
@@ -96,7 +103,7 @@ pub fn status(vault: &Vault, agent: &str) -> Value {
         format!("{}://{}{}…{}", u.scheme(), u.host_str().unwrap_or(""), PATH_PREFIX, tail)
     });
     let has_key = secrets::get(&secret_name(agent)).ok().flatten().is_some();
-    json!({"agent": agent, "configured": url.is_some() && has_key, "url": masked, "hasKey": has_key, "instructions": instructions(agent)})
+    json!({"agent": agent, "configured": url.is_some() && has_key, "url": masked, "hasKey": has_key, "canAsk": vault.can_ask(agent), "instructions": instructions(agent, vault.can_ask(agent))})
 }
 
 pub fn load(vault: &Vault, agent: &str) -> Result<(String, String)> {

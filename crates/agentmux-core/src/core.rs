@@ -56,7 +56,16 @@ impl Core {
         let list = |ps: &[&Value]| ps.iter().map(|p| format!("{} ({})", p["id"].as_str().unwrap_or(""), p["name"].as_str().unwrap_or(""))).collect::<Vec<_>>().join(", ");
         let bots: Vec<&Value> = providers.iter().filter(|p| p["family"] == "grok").collect();
         if want == "grok" && bots.len() > 1 {
-            bail!("several Grok bots are connected: {} — ask again with one of these ids", list(&bots));
+            // "grok" alone is ambiguous. The original bot is addressed by its name, added bots by name or id.
+            let shown = bots
+                .iter()
+                .map(|p| {
+                    let (id, name) = (p["id"].as_str().unwrap_or(""), p["name"].as_str().unwrap_or(""));
+                    if id == "grok" { format!("\"{name}\"") } else { format!("\"{name}\" ({id})") }
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            bail!("several Grok bots are connected: {shown}. Ask again using one bot's name (or id)");
         }
         if let Some(p) = providers.iter().find(|p| p["id"] == want) {
             return Ok(p["id"].as_str().unwrap_or("").to_string());

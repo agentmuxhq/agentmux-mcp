@@ -252,6 +252,20 @@ export default function ConnectModal({ ov, initial = "cursor", startAdding, repl
                     </button>
                   )}
                 </div>
+                <label className="flex cursor-pointer items-start gap-2 rounded-md border border-white/10 p-2.5">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={!!p?.canAsk}
+                    onChange={(e) => api.setBotCanAsk(bot, e.target.checked).then(onChanged).catch((err) => setMsg({ ok: false, text: `${err}` }))}
+                  />
+                  <span className="text-zinc-300">
+                    Let this bot start conversations with other agents
+                    <span className="mt-0.5 block text-[11px] leading-relaxed text-zinc-500">
+                      Off: it can only answer questions. On: it can ask Cursor, Claude Code, ChatGPT or other bots, up to 30 questions an hour. Woken agents stay read-only, and its questions never carry your repo&apos;s git diff or notes.
+                    </span>
+                  </span>
+                </label>
                 {meta.subtitle === null && !p?.registered && <div className="text-zinc-600">The bot names itself on its first run, once its routine calls mux_register.</div>}
               </>
             )}

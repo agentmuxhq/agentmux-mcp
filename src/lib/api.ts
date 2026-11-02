@@ -46,6 +46,7 @@ export interface Provider {
   description: string | null;
   family: string | null;
   registered: boolean;
+  canAsk: boolean;
 }
 export interface Session {
   id: string;
@@ -143,6 +144,7 @@ export const api = {
   createRoom: (path: string, members: string[] = []) => call<string>("create_room", { path, members }),
   addBot: (name: string) => call<string>("add_bot", { name }),
   removeBot: (id: string) => call<void>("remove_bot", { id }),
+  setBotCanAsk: (id: string, on: boolean) => call<void>("set_bot_can_ask", { id, on }),
   renameAgent: (id: string, name: string, description?: string) => call<void>("rename_agent", { id, name, description: description ?? null }),
   newSession: (room: string, title: string) => call<string>("new_session", { room, title }),
   setContext: (room: string, kind: "notes" | "terminal" | "diff", content: string) =>

@@ -275,6 +275,14 @@ async fn remove_bot(state: State<'_, AppState>, id: String) -> Result<(), String
     .map_err(err)?
 }
 
+/// Let a Grok bot start conversations with other agents over the tunnel (off by default).
+#[tauri::command]
+fn set_bot_can_ask(state: State<'_, AppState>, id: String, on: bool) -> Result<(), String> {
+    state.core.vault.set_can_ask(&id, on).map_err(err)?;
+    state.core.emit("provider_connected", json!({"id": id}));
+    Ok(())
+}
+
 #[tauri::command]
 fn rename_agent(state: State<'_, AppState>, id: String, name: String, description: Option<String>) -> Result<(), String> {
     state.core.vault.set_profile(&id, &name, description.as_deref()).map_err(err)?;
@@ -576,6 +584,7 @@ pub fn run() {
             add_bot,
             remove_bot,
             rename_agent,
+            set_bot_can_ask,
             gateway_status,
             gateway_start,
             gateway_stop,

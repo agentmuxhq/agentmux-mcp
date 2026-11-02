@@ -34,6 +34,10 @@ fn token_secret(agent: &str) -> String {
 }
 /// Tools a remote (tunnelled) caller may use.
 pub const REMOTE_TOOLS: &[&str] = &["mux_whoami", "mux_contacts", "mux_register", "mux_inbox", "mux_reply"];
+/// Added for a bot that has been switched on to start conversations.
+pub const ASK_TOOLS: &[&str] = &["mux_ask_peer", "mux_get_reply"];
+/// Per bot: at most this many new questions to other agents per hour.
+const MAX_ASKS_PER_HOUR: usize = 30;
 const CF_TOKEN_SECRET: &str = "cloudflare-tunnel-token";
 const NGROK_TOKEN_SECRET: &str = "ngrok-authtoken";
 pub const PROVIDERS: &[&str] = &["cloudflared", "ngrok"];
@@ -100,6 +104,7 @@ pub struct Gateway {
     tunnel: Mutex<TunnelState>,
     http: Mutex<Option<String>>,
     limiter: Mutex<Limiter>,
+    asks: Mutex<HashMap<String, Vec<Instant>>>,
 }
 
 impl Gateway {
@@ -110,6 +115,7 @@ impl Gateway {
             tunnel: Mutex::new(TunnelState { phase: Phase::Stopped, url: None, error: None, last_log: None, kill: None, done: None, epoch: 0 }),
             http: Mutex::new(None),
             limiter: Mutex::new(Limiter { window: Instant::now(), total: 0, bad: 0 }),
+            asks: Mutex::new(HashMap::new()),
         })
     }
 
@@ -852,6 +858,18 @@ Delete that DNS record in the Cloudflare dashboard, then use a subdomain of {zon
         l.total <= 300 && l.bad < 10
     }
 
+    /// Sliding one-hour budget of new questions per bot.
+    fn ask_allowed(&self, agent: &str) -> bool {
+        let mut m = self.asks.lock().unwrap();
+        let v = m.entry(agent.to_string()).or_default();
+        v.retain(|t| t.elapsed() < Duration::from_secs(3600));
+        if v.len() >= MAX_ASKS_PER_HOUR {
+            return false;
+        }
+        v.push(Instant::now());
+        true
+    }
+
     fn note_bad_token(&self) {
         self.limiter.lock().unwrap().bad += 1;
     }
@@ -877,18 +895,43 @@ async fn mcp_post(State(g): State<Arc<Gateway>>, headers: HeaderMap, body: Bytes
         Ok(v) => v,
         Err(_) => return (StatusCode::BAD_REQUEST, Json(json!({"jsonrpc": "2.0", "id": null, "error": {"code": -32700, "message": "parse error"}}))).into_response(),
     };
-    let ctx = CallerCtx { agent, cwd: config::home().to_string_lossy().to_string(), hop: 0 };
+    // The tool set is decided per request, so flipping the switch takes effect immediately.
+    let mut tools: Vec<&str> = REMOTE_TOOLS.to_vec();
+    if g.core.vault.can_ask(&agent) {
+        tools.extend_from_slice(ASK_TOOLS);
+    }
+    let ctx = CallerCtx { agent: agent.clone(), cwd: config::home().to_string_lossy().to_string(), hop: 0 };
+    let mut handle = |mut item: Value| {
+        let g = g.clone();
+        let (ctx, tools, agent) = (ctx.clone(), tools.clone(), agent.clone());
+        async move {
+            if item["method"] == "tools/call" && item["params"]["name"] == "mux_ask_peer" && tools.contains(&"mux_ask_peer") {
+                // A remote bot can't pick a room or session: its questions go to the neutral home
+                // room, so no workspace diff or notes ride along, and it can't write into someone's thread.
+                if let Some(a) = item["params"]["arguments"].as_object_mut() {
+                    a.remove("room");
+                    a.remove("session");
+                }
+                if !g.ask_allowed(&agent) {
+                    let id = item.get("id").cloned().unwrap_or(Value::Null);
+                    return Some(json!({"jsonrpc": "2.0", "id": id, "result": {"isError": true,
+                        "content": [{"type": "text", "text": format!("question limit reached ({MAX_ASKS_PER_HOUR} per hour); try again later")}]}}));
+                }
+            }
+            mcp::handle_scoped(&g.core, &ctx, item, Some(&tools)).await
+        }
+    };
     match req {
         Value::Array(items) => {
             let mut out = vec![];
             for item in items {
-                if let Some(r) = mcp::handle_scoped(&g.core, &ctx, item, Some(REMOTE_TOOLS)).await {
+                if let Some(r) = handle(item).await {
                     out.push(r);
                 }
             }
             if out.is_empty() { StatusCode::ACCEPTED.into_response() } else { Json(Value::Array(out)).into_response() }
         }
-        item => match mcp::handle_scoped(&g.core, &ctx, item, Some(REMOTE_TOOLS)).await {
+        item => match handle(item).await {
             Some(r) => Json(r).into_response(),
             None => StatusCode::ACCEPTED.into_response(),
         },

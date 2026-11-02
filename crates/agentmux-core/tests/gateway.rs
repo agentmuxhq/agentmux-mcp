@@ -169,6 +169,44 @@ wait"#,
     assert_ne!(ok2["result"]["isError"], true);
     assert_eq!(core.wait_ticket(&t_bot, 1).await.unwrap()["answer"], "mine");
 
+    // ── a bot can start conversations only when it's switched on ──
+    assert!(!core.vault.can_ask(&bot));
+    let off = rpc(&c, None, Some(TOKEN2), call("mux_ask_peer", json!({"to": "Grok Bot", "question": "hello?"}))).await.json::<Value>().await.unwrap();
+    assert_eq!(off["result"]["isError"], true, "off by default");
+    core.vault.set_can_ask(&bot, true).unwrap();
+    assert!(core.vault.set_can_ask("cursor", true).is_err(), "only Grok bots have this switch");
+    let list2 = rpc(&c, None, Some(TOKEN2), json!({"jsonrpc":"2.0","id":4,"method":"tools/list"})).await.json::<Value>().await.unwrap();
+    let names2: Vec<&str> = list2["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+    assert!(names2.contains(&"mux_ask_peer") && names2.contains(&"mux_get_reply"), "{names2:?}");
+    // The other bot's tool list is unchanged.
+    let list1 = rpc(&c, None, Some(TOKEN), json!({"jsonrpc":"2.0","id":4,"method":"tools/list"})).await.json::<Value>().await.unwrap();
+    assert!(!list1["result"]["tools"].as_array().unwrap().iter().any(|t| t["name"] == "mux_ask_peer"));
+    // A room/session picked by the bot is ignored: the question lands in the neutral home room.
+    let asked = rpc(&c, None, Some(TOKEN2), call("mux_ask_peer", json!({"to": "Grok Bot", "question": "can you check the deploy?", "room": "checkout", "session": "sess-nope", "wait_s": 1})))
+        .await
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_ne!(asked["result"]["isError"], true, "{asked}");
+    let text = asked["result"]["content"][0]["text"].as_str().unwrap().to_string();
+    assert!(text.contains("pending") || text.contains("running"), "{text}");
+    let tid = serde_json::from_str::<Value>(&text).unwrap()["ticket"].as_str().unwrap().to_string();
+    let t = core.vault.ticket(&tid).unwrap().unwrap();
+    assert_eq!((t["from"].as_str(), t["to"].as_str()), (Some("grok:job-hunter"), Some("grok")));
+    assert_ne!(t["roomId"], "checkout", "bot can't aim its questions at a workspace room");
+    // The target sees it in its inbox, and only the asker can read the reply.
+    let inbox = rpc(&c, None, Some(TOKEN), call("mux_inbox", json!({}))).await.json::<Value>().await.unwrap();
+    assert!(inbox["result"]["content"][0]["text"].as_str().unwrap().contains(&tid));
+    let steal = rpc(&c, None, Some(TOKEN), call("mux_get_reply", json!({"ticket": tid, "wait_s": 0}))).await.json::<Value>().await.unwrap();
+    assert!(steal["result"]["isError"] == true || steal["result"]["content"][0]["text"].as_str().unwrap().contains("not asked by you"), "{steal}");
+    core.finish(&tid, "answered", "deploy looks fine", None).unwrap();
+    let got = rpc(&c, None, Some(TOKEN2), call("mux_get_reply", json!({"ticket": tid, "wait_s": 1}))).await.json::<Value>().await.unwrap();
+    assert!(got["result"]["content"][0]["text"].as_str().unwrap().contains("deploy looks fine"));
+    // Switching it off again takes effect on the next request.
+    core.vault.set_can_ask(&bot, false).unwrap();
+    let off2 = rpc(&c, None, Some(TOKEN2), call("mux_ask_peer", json!({"to": "Grok Bot", "question": "again?"}))).await.json::<Value>().await.unwrap();
+    assert_eq!(off2["result"]["isError"], true);
+
     // ── tunnel: cloudflared is the default ──
     let s = gw.status();
     assert_eq!(s["provider"], "cloudflared");
