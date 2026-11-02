@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { FileText, FolderGit2, GitBranch, Plus, RefreshCw, Search, Send, Settings, Terminal } from "lucide-react";
 import {
   agentMeta,
@@ -91,7 +92,7 @@ export default function App() {
   const [log, setLog] = useState<MuxEvent[]>([]);
   const [rightTab, setRightTab] = useState<RightTab>("status");
   const [showConnect, setShowConnect] = useState(false);
-  const [showSettings, setShowSettings] = useState<false | "daemon" | "access">(false);
+  const [showSettings, setShowSettings] = useState<false | "daemon" | "access" | "sync">(false);
   const [error, setError] = useState<string | null>(null);
 
   const [to, setTo] = useState<string>("chatgpt");
@@ -166,6 +167,17 @@ export default function App() {
     }).then((u) => (un = u));
     return () => un?.();
   }, [refresh, loadMessages]);
+
+  // The menu bar asks the window to open a screen.
+  useEffect(() => {
+    if (!inTauri()) return;
+    const offs = [
+      listen<string>("ui://settings", (e) => setShowSettings((e.payload as "daemon" | "access" | "sync") ?? "daemon")),
+      listen("ui://connect", () => (setConnectInit({}), setShowConnect(true))),
+      listen<string>("ui://error", (e) => setError(String(e.payload))),
+    ];
+    return () => void offs.forEach((o) => o.then((f) => f()));
+  }, []);
 
   // Follow the newest session when the room changes or a new session appears.
   const latestSession = room?.sessions[0]?.id ?? null;
@@ -540,11 +552,17 @@ export default function App() {
             <div className="space-y-5 text-xs">
               <div className="rounded-lg border border-white/10 p-3">
                 <div className="mb-2 flex items-center gap-2">
-                  <Dot on={!ov.daemon.startsWith("error")} />
+                  <Dot on={ov.daemon === "embedded" || ov.daemon === "external"} />
                   <span className="font-display text-sm font-semibold">Local daemon</span>
-                  <Badge tone={ov.daemon.startsWith("error") ? "red" : "green"}>{ov.daemon}</Badge>
+                  <Badge tone={ov.daemon.startsWith("error") ? "red" : ov.daemon === "off" ? "zinc" : "green"}>{ov.daemon}</Badge>
+                  <button
+                    className={`${btn} ml-auto`}
+                    onClick={() => api.setDaemon(ov.daemon === "off" || ov.daemon.startsWith("error")).then(refresh).catch((e) => setError(String(e)))}
+                  >
+                    {ov.daemon === "off" || ov.daemon.startsWith("error") ? "Turn on" : "Turn off"}
+                  </button>
                 </div>
-                <div className="break-all font-mono text-[10.5px] text-zinc-500">{ov.socket}</div>
+                <div className="break-all font-mono text-[10.5px] text-zinc-500">{ov.daemon === "off" ? "Off: agents can't reach AgentMux, and the tunnel is down." : ov.socket}</div>
               </div>
               <PublicAccessCard onManage={() => setShowSettings("access")} />
               <div>

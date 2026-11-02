@@ -136,6 +136,7 @@ function Inspector() {
 
 export default function SettingsModal({ ov, onClose, initial = "daemon" }: { ov: Overview; onClose: () => void; initial?: Section }) {
   const [sec, setSec] = useState<Section>(initial);
+  useEffect(() => setSec(initial), [initial]);
   const tabs: [Section, string][] = [
     ["daemon", "Daemon"],
     ["access", "Public access"],
@@ -155,7 +156,7 @@ export default function SettingsModal({ ov, onClose, initial = "daemon" }: { ov:
       {sec === "daemon" && (
         <div>
           <div className="mb-3 flex items-center gap-2 text-xs">
-            Daemon <Badge tone={ov.daemon.startsWith("error") ? "red" : "green"}>{ov.daemon}</Badge>
+            Daemon <Badge tone={ov.daemon.startsWith("error") ? "red" : ov.daemon === "off" ? "zinc" : "green"}>{ov.daemon}</Badge>
           </div>
           <Row k="Transport" v="Unix socket (0600) — one stdio shim per agent" />
           <Row k="Socket" v={ov.socket} />

@@ -5,10 +5,20 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
-/// Bind the per-user Unix socket (dir 0700, socket 0600) and serve shim connections.
+/// Bind the per-user Unix socket (dir 0700, socket 0600) and serve shim connections until killed.
+/// This is the headless entry point (`agentmux daemon`); it refuses to start while AgentMux is turned off.
 pub async fn serve(core: Arc<Core>) -> Result<()> {
+    if config::is_paused() {
+        bail!("AgentMux is turned off. Turn it on from the AgentMux menu bar icon first.");
+    }
+    let (_keep_open, rx) = watch::channel(false);
+    serve_until(core, rx).await
+}
+
+/// Like `serve`, but stops (closing every connection and removing the socket) once `shutdown` flips to true.
+pub async fn serve_until(core: Arc<Core>, mut shutdown: watch::Receiver<bool>) -> Result<()> {
     let dir = config::run_dir();
     std::fs::create_dir_all(&dir)?;
     #[cfg(unix)]
@@ -39,22 +49,83 @@ pub async fn serve(core: Arc<Core>) -> Result<()> {
     }
     tracing::info!("agentmux daemon listening on {}", sock.display());
     loop {
-        let (stream, _) = listener.accept().await?;
-        let core = core.clone();
+        let (stream, _) = tokio::select! {
+            r = listener.accept() => r?,
+            _ = shutdown.changed() => break,
+        };
+        let (core, rx) = (core.clone(), shutdown.clone());
         tokio::spawn(async move {
-            if let Err(e) = handle_conn(core, stream).await {
+            if let Err(e) = handle_conn(core, stream, rx).await {
                 tracing::debug!("connection ended: {e}");
             }
         });
     }
+    drop(listener);
+    let _ = std::fs::remove_file(&sock);
+    Ok(())
 }
 
-async fn handle_conn(core: Arc<Core>, stream: UnixStream) -> Result<()> {
+/// The daemon embedded in the desktop app, with an on/off switch (the menu bar toggle).
+pub struct Switch {
+    core: Arc<Core>,
+    running: std::sync::Mutex<Option<(watch::Sender<bool>, tokio::task::JoinHandle<Result<()>>)>>,
+}
+
+impl Switch {
+    pub fn new(core: Arc<Core>) -> Arc<Self> {
+        Arc::new(Self { core, running: std::sync::Mutex::new(None) })
+    }
+
+    pub fn is_on(&self) -> bool {
+        self.running.lock().unwrap().as_ref().is_some_and(|(_, h)| !h.is_finished())
+    }
+
+    /// Turn on. Errors if the socket can't be bound (for example another daemon already owns it).
+    pub async fn start(&self) -> Result<()> {
+        if self.is_on() {
+            return Ok(());
+        }
+        let _ = std::fs::remove_file(config::paused_marker());
+        let (tx, rx) = watch::channel(false);
+        let handle = tokio::spawn(serve_until(self.core.clone(), rx));
+        *self.running.lock().unwrap() = Some((tx, handle));
+        for _ in 0..40 {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            let finished = self.running.lock().unwrap().as_ref().is_some_and(|(_, h)| h.is_finished());
+            if finished {
+                let (_, h) = self.running.lock().unwrap().take().unwrap();
+                return match h.await {
+                    Ok(Err(e)) => Err(e),
+                    Ok(Ok(())) => bail!("the daemon stopped right after starting"),
+                    Err(e) => bail!("the daemon crashed: {e}"),
+                };
+            }
+            if config::socket_path().exists() {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+
+    /// Turn off: nobody can connect, open connections close, and the marker keeps shims from respawning it.
+    pub async fn stop(&self) {
+        let _ = std::fs::create_dir_all(config::run_dir());
+        let _ = std::fs::write(config::paused_marker(), "off\n");
+        let taken = self.running.lock().unwrap().take();
+        if let Some((tx, handle)) = taken {
+            let _ = tx.send(true);
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(3), handle).await;
+        }
+        let _ = std::fs::remove_file(config::socket_path());
+    }
+}
+
+async fn handle_conn(core: Arc<Core>, stream: UnixStream, mut shutdown: watch::Receiver<bool>) -> Result<()> {
     let (r, mut w) = stream.into_split();
     let mut lines = BufReader::new(r).lines();
 
     // First line identifies the caller: {"agentmux_hello":{"agent","cwd","hop"}}
-    let Some(first) = lines.next_line().await? else { return Ok(()) };
+    let Some(first) = (tokio::select! { l = lines.next_line() => l?, _ = shutdown.changed() => return Ok(()) }) else { return Ok(()) };
     let hello: Value = serde_json::from_str(&first)?;
     let h = &hello["agentmux_hello"];
     let agent = h["agent"].as_str().unwrap_or("").to_string();
@@ -78,7 +149,11 @@ async fn handle_conn(core: Arc<Core>, stream: UnixStream) -> Result<()> {
     });
 
     // Requests run concurrently so a long mux_ask_peer doesn't block pings.
-    while let Some(line) = lines.next_line().await? {
+    loop {
+        let line = tokio::select! {
+            l = lines.next_line() => match l? { Some(l) => l, None => break },
+            _ = shutdown.changed() => break,
+        };
         if line.trim().is_empty() {
             continue;
         }

@@ -10,6 +10,7 @@ AgentMux is open source and local-first. The free app will always do everything 
 - [x] Sessions per conversation, rooms per git workspace, shared git diff and notes
 - [x] Tunnels: temporary (Cloudflare quick tunnel) or permanent (your domain on Cloudflare, or an ngrok static domain)
 - [x] Open source (Apache-2.0), GitHub releases with in-app auto-update
+- [x] Menu bar menu: on/off switch, tunnel, providers, sync and update status
 
 ## Next — v0.2
 

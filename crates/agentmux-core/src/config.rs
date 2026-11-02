@@ -20,6 +20,16 @@ pub fn run_dir() -> PathBuf {
     home().join("run")
 }
 
+/// Present while the user has turned AgentMux off from the menu bar. The shim and the headless
+/// daemon both respect it, so nothing restarts the daemon behind the user's back.
+pub fn paused_marker() -> PathBuf {
+    run_dir().join("paused")
+}
+
+pub fn is_paused() -> bool {
+    paused_marker().exists()
+}
+
 pub fn socket_path() -> PathBuf {
     run_dir().join("agentmux.sock")
 }

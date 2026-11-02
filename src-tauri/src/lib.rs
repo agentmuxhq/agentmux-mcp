@@ -3,15 +3,54 @@ use agentmux_core::{config, connectors, context, daemon, mcp, sync, vault, webho
 use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Emitter, Manager, State, WindowEvent};
 use tauri_plugin_updater::UpdaterExt;
 
-struct AppState {
-    core: Arc<Core>,
-    gateway: Arc<Gateway>,
-    daemon: Arc<Mutex<String>>,
+mod tray;
+
+pub(crate) struct AppState {
+    pub(crate) core: Arc<Core>,
+    pub(crate) gateway: Arc<Gateway>,
+    pub(crate) daemon: Arc<Mutex<String>>,
+    switch: Arc<daemon::Switch>,
+    /// Newest version GitHub offered, if it is newer than this one.
+    pub(crate) update: Arc<Mutex<Option<String>>>,
+    /// What the tray menu currently shows, so it is only rebuilt on change.
+    tray_sig: Mutex<Option<Vec<tray::E>>>,
+}
+
+/// Turn AgentMux on or off: the daemon, the HTTP gateway and the tunnel go together.
+pub(crate) async fn power(app: &tauri::AppHandle, on: bool) -> Result<String, String> {
+    let st = app.state::<AppState>();
+    if on {
+        let status = match st.switch.start().await {
+            Ok(()) => "embedded".to_string(),
+            Err(e) if e.to_string().contains("already running") => "external".to_string(),
+            Err(e) => format!("error: {e}"),
+        };
+        *st.daemon.lock().unwrap() = status.clone();
+        st.gateway.set_paused(false);
+        if st.gateway.autostart() && st.gateway.permanent() && !matches!(st.gateway.status()["state"].as_str(), Some("running") | Some("starting")) {
+            let _ = st.gateway.start().await;
+        }
+        st.core.emit("daemon", json!({"on": true}));
+        tray::refresh(app);
+        Ok(status)
+    } else {
+        st.switch.stop().await;
+        st.gateway.set_paused(true);
+        st.gateway.stop().await;
+        *st.daemon.lock().unwrap() = "off".into();
+        st.core.emit("daemon", json!({"on": false}));
+        tray::refresh(app);
+        Ok("off".into())
+    }
+}
+
+#[tauri::command]
+async fn set_daemon(app: tauri::AppHandle, on: bool) -> Result<String, String> {
+    power(&app, on).await
 }
 
 fn err<T: std::fmt::Display>(e: T) -> String {
@@ -460,7 +499,10 @@ fn set_auto_update(state: State<'_, AppState>, on: bool) -> Result<(), String> {
 /// Manual check from Settings: errors are shown to the user.
 #[tauri::command]
 async fn check_update(app: tauri::AppHandle) -> Result<Value, String> {
-    Ok(update_json(&find_update(&app).await?))
+    let u = find_update(&app).await?;
+    *app.state::<AppState>().update.lock().unwrap() = u.as_ref().map(|x| x.version.clone());
+    tray::refresh(&app);
+    Ok(update_json(&u))
 }
 
 /// Download, verify (signature against the public key in tauri.conf.json), install, relaunch.
@@ -490,7 +532,7 @@ async fn install_update(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
     app.restart()
 }
 
-fn show_main(app: &tauri::AppHandle) {
+pub(crate) fn show_main(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.show();
         let _ = w.unminimize();
@@ -512,17 +554,22 @@ pub fn run() {
         })
         .setup(|app| {
             let core = Core::new()?;
-            let status = Arc::new(Mutex::new("embedded".to_string()));
-
-            let (c, st) = (core.clone(), status.clone());
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = daemon::serve(c).await {
-                    let m = e.to_string();
-                    *st.lock().unwrap() = if m.contains("already running") { "external".into() } else { format!("error: {m}") };
-                }
-            });
+            let paused = config::is_paused();
+            let status = Arc::new(Mutex::new(if paused { "off" } else { "embedded" }.to_string()));
+            let switch = daemon::Switch::new(core.clone());
 
             let gateway = Gateway::new(core.clone());
+            if paused {
+                gateway.set_paused(true); // turned off last time: stay off until the user turns it on
+            } else {
+                let (sw, st) = (switch.clone(), status.clone());
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = sw.start().await {
+                        let m = e.to_string();
+                        *st.lock().unwrap() = if m.contains("already running") { "external".into() } else { format!("error: {m}") };
+                    }
+                });
+            }
             let gw = gateway.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = gw.serve_http().await {
@@ -534,7 +581,10 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 // Give the HTTP endpoint a moment to bind before a fresh start needs it.
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                if !gw.adopt().await && gw.autostart() && gw.permanent() {
+                let adopted = gw.adopt().await;
+                if gw.paused() {
+                    gw.stop().await; // off means off: don't leave an old tunnel exposed
+                } else if !adopted && gw.autostart() && gw.permanent() {
                     if let Err(e) = gw.start().await {
                         tracing::warn!("could not auto-start the tunnel: {e}");
                     }
@@ -560,17 +610,17 @@ pub fn run() {
                 tracing::warn!("could not create ~/.agentmux/bin/agentmux link: {e}");
             }
 
-            let show = MenuItem::with_id(app, "show", "Show AgentMux", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit AgentMux", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &quit])?;
+            let update_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
             // Quiet background check: ~10 s after launch, then every 6 h. Errors stay silent.
-            let (handle, core2) = (app.handle().clone(), core.clone());
+            let (handle, core2, slot) = (app.handle().clone(), core.clone(), update_slot.clone());
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(10)).await;
                 loop {
                     if auto_update_on(&core2) {
                         if let Ok(Some(u)) = find_update(&handle).await {
+                            *slot.lock().unwrap() = Some(u.version.clone());
                             let _ = handle.emit("update://available", json!({"version": u.version, "notes": u.body}));
+                            tray::refresh(&handle);
                         }
                     }
                     tokio::time::sleep(std::time::Duration::from_secs(6 * 3600)).await;
@@ -583,7 +633,7 @@ pub fn run() {
                 tokio::time::sleep(std::time::Duration::from_secs(120)).await;
                 loop {
                     let on = core3.vault.setting("sync.auto").ok().flatten().as_deref() == Some("1") && core3.vault.setting("sync.remote").ok().flatten().is_some();
-                    if on {
+                    if on && !config::is_paused() {
                         if let Err(e) = sync::sync_now(&core3.vault).await {
                             tracing::warn!("auto sync failed: {e}");
                         }
@@ -592,22 +642,27 @@ pub fn run() {
                 }
             });
 
-            let quit_gw = gateway.clone();
-            TrayIconBuilder::new()
+            TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
-                .menu(&menu)
-                .on_menu_event(move |app, ev| match ev.id.as_ref() {
-                    "show" => show_main(app),
-                    "quit" => {
-                        // Don't leave a public tunnel running after the app is gone.
-                        tauri::async_runtime::block_on(quit_gw.stop());
-                        app.exit(0)
-                    }
-                    _ => {}
-                })
+                .tooltip("AgentMux")
+                .on_menu_event(|app, ev| tray::on_event(app, ev.id.as_ref()))
                 .build(app)?;
 
-            app.manage(AppState { core, gateway, daemon: status });
+            app.manage(AppState { core: core.clone(), gateway, daemon: status, switch, update: update_slot, tray_sig: Mutex::new(None) });
+
+            // Keep the menu current: on any event (debounced), and at least every 30 s so "5m ago" stays true.
+            let handle = app.handle().clone();
+            let mut rx = core.subscribe();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                loop {
+                    tray::refresh(&handle);
+                    tokio::select! {
+                        _ = rx.recv() => { tokio::time::sleep(std::time::Duration::from_millis(500)).await; while rx.try_recv().is_ok() {} }
+                        _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
+                    }
+                }
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -654,6 +709,7 @@ pub fn run() {
             tunnel_ngrok_setup,
             tunnel_set_autostart,
             app_version,
+            set_daemon,
             set_auto_update,
             check_update,
             install_update,

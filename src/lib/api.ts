@@ -181,6 +181,7 @@ export const api = {
   syncNow: () => call<{ status: SyncStatus; report: SyncReport }>("sync_now"),
   syncSetOptions: (includeDiffs: boolean, auto: boolean) => call<SyncStatus>("sync_set_options", { includeDiffs, auto }),
   syncDisconnect: () => call<SyncStatus>("sync_disconnect"),
+  setDaemon: (on: boolean) => call<string>("set_daemon", { on }),
   appVersion: () => call<{ version: string; autoCheck: boolean }>("app_version"),
   setAutoUpdate: (on: boolean) => call<void>("set_auto_update", { on }),
   checkUpdate: () => call<{ available: boolean; version?: string; notes?: string | null }>("check_update"),

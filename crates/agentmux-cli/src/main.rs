@@ -80,6 +80,9 @@ async fn connect_or_spawn() -> Result<UnixStream> {
     if let Ok(s) = UnixStream::connect(&sock).await {
         return Ok(s);
     }
+    if config::is_paused() {
+        bail!("AgentMux is turned off. Turn it on from the AgentMux menu bar icon, then try again.");
+    }
     // No daemon yet: start a detached headless one, then wait for its socket.
     let mut c = std::process::Command::new(std::env::current_exe()?);
     c.arg("daemon").stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());

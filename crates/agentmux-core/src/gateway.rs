@@ -105,6 +105,7 @@ pub struct Gateway {
     http: Mutex<Option<String>>,
     limiter: Mutex<Limiter>,
     asks: Mutex<HashMap<String, Vec<Instant>>>,
+    paused: std::sync::atomic::AtomicBool,
 }
 
 impl Gateway {
@@ -116,6 +117,7 @@ impl Gateway {
             http: Mutex::new(None),
             limiter: Mutex::new(Limiter { window: Instant::now(), total: 0, bad: 0 }),
             asks: Mutex::new(HashMap::new()),
+            paused: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -186,6 +188,16 @@ impl Gateway {
             }
         }
         found
+    }
+
+    /// While paused (AgentMux turned off) the HTTP endpoint answers 503 and the tunnel is down.
+    pub fn set_paused(&self, on: bool) {
+        self.paused.store(on, std::sync::atomic::Ordering::SeqCst);
+        self.emit();
+    }
+
+    pub fn paused(&self) -> bool {
+        self.paused.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     // ───────── settings ─────────
@@ -537,6 +549,7 @@ Delete that DNS record in the Cloudflare dashboard, then use a subdomain of {zon
                 "cloudflared": wakers::find_bin("cloudflared").is_some(),
                 "ngrok": wakers::find_bin("ngrok").is_some(),
             },
+            "paused": self.paused(),
             "state": t.phase.as_str(),
             "url": t.url,
             "mcpUrl": mcp_url,
@@ -880,6 +893,9 @@ async fn healthz() -> Json<Value> {
 }
 
 async fn mcp_post(State(g): State<Arc<Gateway>>, headers: HeaderMap, body: Bytes) -> Response {
+    if g.paused() {
+        return (StatusCode::SERVICE_UNAVAILABLE, "AgentMux is turned off").into_response();
+    }
     if !g.host_allowed(&headers) {
         return (StatusCode::FORBIDDEN, "unexpected Host header").into_response();
     }

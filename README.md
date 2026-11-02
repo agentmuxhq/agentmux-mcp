@@ -80,6 +80,10 @@ cargo test -p agentmux-core
 
 The `agentmux` CLI also runs headless: `agentmux daemon`, `agentmux status`, `agentmux call <tool> '<json>' --as <agent>`.
 
+## Menu bar
+
+The AgentMux icon in the menu bar shows what's going on at a glance: an on/off switch for AgentMux, the public tunnel (status, domain, copy the MCP URL, start or stop it), your providers and when each was last seen, sync status with a one-click Sync now, the version with an update link, and shortcuts to open the app or Settings. Turning AgentMux off stops the daemon and the tunnel; nothing restarts them until you turn it back on.
+
 ## Backup and sync (free)
 
 **Settings → Sync** backs up your rooms, sessions and setup to a private git repo you own (GitHub, GitLab or any git remote) and restores them on another Mac. Bot tokens, webhook keys and tunnel credentials are never included, git diffs are opt-in, obvious credentials in messages are redacted, and AgentMux refuses to sync to a public GitHub or GitLab repo. Syncing only adds to your vault; it never deletes or overwrites anything.

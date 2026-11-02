@@ -25,6 +25,7 @@ version = "0.1.1"
 dependencies = [
  "agentmux-core",
  "anyhow",
+ "chrono",
  "serde",
  "serde_json",
  "tauri",
