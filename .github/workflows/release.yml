@@ -108,16 +108,18 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release edit "${{ github.ref_name }}" --repo "${{ github.repository }}" --draft=false --latest
 
-  # npm: @agentmuxhq/cli plus one package per Mac type (skipped if NPM_TOKEN isn't available).
+  # npm: starts npm-publish.yml as its own run, because npm's Trusted Publishing is tied to that
+  # workflow file (no npm token is stored).
   npm:
     needs: publish
+    runs-on: ubuntu-latest
     permissions:
-      contents: read
-      id-token: write
-    uses: ./.github/workflows/npm-publish.yml
-    with:
-      version: ${{ github.ref_name }}
-    secrets: inherit
+      actions: write
+    steps:
+      - name: Start the npm publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run npm-publish.yml --repo "$GITHUB_REPOSITORY" --ref main -f version="${GITHUB_REF_NAME#v}"
 
   # Homebrew: updates agentmuxhq/homebrew-tap. Skipped until the HOMEBREW_TAP_TOKEN secret exists.
   homebrew:
