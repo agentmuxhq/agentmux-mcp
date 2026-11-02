@@ -6,6 +6,7 @@ pub mod daemon;
 pub mod gateway;
 pub mod mcp;
 pub mod secrets;
+pub mod sync;
 pub mod vault;
 pub mod wakers;
 pub mod webhook;

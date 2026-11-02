@@ -36,6 +36,22 @@ export function agentMeta(id: string): { name: string; handle: string; color: st
   };
 }
 
+export interface SyncStatus {
+  configured: boolean;
+  remote: string | null;
+  includeDiffs: boolean;
+  auto: boolean;
+  last: string | null;
+  error: string | null;
+  visibility: "private" | "unverified" | null;
+  gitInstalled: boolean;
+  dir: string;
+}
+export interface SyncReport {
+  imported: { rooms: number; sessions: number; messages: number; bots: number };
+  pushed: boolean;
+}
+
 export interface Provider {
   id: AgentId;
   name: string;
@@ -160,6 +176,11 @@ export const api = {
   grokSave: (agent: string, url: string, key: string) => call<GrokWebhook>("grok_webhook_save", { agent, url, key }),
   grokClear: (agent: string) => call<GrokWebhook>("grok_webhook_clear", { agent }),
   grokTest: (agent: string) => call<string>("grok_webhook_test", { agent }),
+  syncStatus: () => call<SyncStatus>("sync_status"),
+  syncConnect: (remote: string, includeDiffs: boolean, auto: boolean) => call<{ status: SyncStatus; report: SyncReport }>("sync_connect", { remote, includeDiffs, auto }),
+  syncNow: () => call<{ status: SyncStatus; report: SyncReport }>("sync_now"),
+  syncSetOptions: (includeDiffs: boolean, auto: boolean) => call<SyncStatus>("sync_set_options", { includeDiffs, auto }),
+  syncDisconnect: () => call<SyncStatus>("sync_disconnect"),
   appVersion: () => call<{ version: string; autoCheck: boolean }>("app_version"),
   setAutoUpdate: (on: boolean) => call<void>("set_auto_update", { on }),
   checkUpdate: () => call<{ available: boolean; version?: string; notes?: string | null }>("check_update"),

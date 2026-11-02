@@ -34,6 +34,18 @@ CREATE TABLE IF NOT EXISTS context(
   room_id TEXT, kind TEXT, content TEXT, captured_at TEXT, PRIMARY KEY(room_id, kind));
 "#;
 
+/// Settings that travel with a sync. Webhook URLs, tokens and tunnel ids are deliberately absent:
+/// they belong to one machine's Keychain and Cloudflare login.
+pub const SYNC_SETTINGS: &[&str] = &[
+    "tunnel.provider",
+    "tunnel.cf_hostname",
+    "tunnel.cf_zone",
+    "tunnel.cf_mode",
+    "tunnel.ngrok_domain",
+    "tunnel.autostart",
+    "updates.auto",
+];
+
 pub struct Vault {
     conn: Mutex<Connection>,
     threads_dir: PathBuf,
@@ -584,6 +596,10 @@ impl Vault {
     /// Write `threads/<room>.md` atomically with 0600 permissions.
 /// Consistent copy of the whole vault (safe while the app is running), for example before an
     /// update. Written as `<dir>/vault-<label>-<timestamp>.db` (0600); only the newest `keep` are kept.
+    pub fn threads_dir(&self) -> &Path {
+        &self.threads_dir
+    }
+
     pub fn backup(&self, dir: &Path, label: &str, keep: usize) -> Result<PathBuf> {
         secure_dir(dir)?;
         let safe: String = label.chars().map(|c| if c.is_ascii_alphanumeric() || c == '.' { c } else { '-' }).collect();
@@ -606,6 +622,124 @@ impl Vault {
             let _ = std::fs::remove_file(p);
         }
         Ok(path)
+    }
+
+/// Everything worth syncing, as plain JSON rows. Secrets never live in the vault, so none are here;
+    /// settings are limited to an allow-list, and git diffs / terminal output only go out when asked for.
+    pub fn dump_for_sync(&self, include_context: bool) -> Result<Value> {
+        let c = self.conn.lock().unwrap();
+        let table = |sql: &str| -> Result<Vec<Value>> {
+            let mut st = c.prepare(sql)?;
+            let names: Vec<String> = st.column_names().into_iter().map(|s| s.to_string()).collect();
+            let rows = st.query_map([], |r| {
+                let mut o = serde_json::Map::new();
+                for (i, n) in names.iter().enumerate() {
+                    let v = match r.get_ref(i)? {
+                        rusqlite::types::ValueRef::Null => Value::Null,
+                        rusqlite::types::ValueRef::Integer(x) => json!(x),
+                        rusqlite::types::ValueRef::Real(x) => json!(x),
+                        rusqlite::types::ValueRef::Text(t) => json!(String::from_utf8_lossy(t)),
+                        rusqlite::types::ValueRef::Blob(_) => Value::Null,
+                    };
+                    o.insert(n.clone(), v);
+                }
+                Ok(Value::Object(o))
+            })?;
+            Ok(rows.collect::<std::result::Result<_, _>>()?)
+        };
+        let allowed = SYNC_SETTINGS.iter().map(|k| format!("'{k}'")).collect::<Vec<_>>().join(",");
+        let kinds = if include_context { "'notes','diff','terminal'" } else { "'notes'" };
+        Ok(json!({
+            "providers": table("SELECT id, name, wake_kind, description, family, registered FROM providers ORDER BY rowid")?,
+            "rooms": table("SELECT id, title, kind, workspace_path, branch, allow_edits, updated_at FROM rooms ORDER BY id")?,
+            "room_members": table("SELECT room_id, provider_id FROM room_members ORDER BY room_id, provider_id")?,
+            "sessions": table("SELECT id, room_id, title, status, started_at FROM sessions ORDER BY started_at")?,
+            "messages": table("SELECT id, session_id, room_id, sender, recipient, kind, text, code, ticket_id, created_at FROM messages ORDER BY created_at, id")?,
+            "tickets": table("SELECT id, session_id, room_id, sender, recipient, question, status, hop, then_to, answer, created_at, answered_at FROM tickets ORDER BY created_at, id")?,
+            "context": table(&format!("SELECT room_id, kind, content, captured_at FROM context WHERE kind IN ({kinds}) ORDER BY room_id, kind"))?,
+            "settings": table(&format!("SELECT key, value FROM settings WHERE key IN ({allowed}) OR key LIKE 'bot.%.can_ask' ORDER BY key"))?,
+        }))
+    }
+
+    /// Merge a dump into this vault without deleting or overwriting anything local: rows are added
+    /// by id, settings only fill gaps, and questions still open on the other machine are closed here.
+    pub fn restore_from_sync(&self, d: &Value) -> Result<Value> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        let arr = |k: &str| d[k].as_array().cloned().unwrap_or_default();
+        let s = |v: &Value, k: &str| v[k].as_str().map(String::from);
+        let (mut rooms, mut sessions, mut messages, mut bots) = (0, 0, 0, 0);
+
+        for p in arr("providers") {
+            let id = s(&p, "id").unwrap_or_default();
+            if id.is_empty() || !(config::AGENTS.iter().any(|(a, _)| *a == id) || id.starts_with("grok:")) {
+                continue;
+            }
+            let have: Option<i64> = tx.query_row("SELECT registered FROM providers WHERE id = ?1", params![id], |r| r.get(0)).optional()?;
+            let reg = p["registered"].as_i64().unwrap_or(0);
+            match have {
+                None => {
+                    // A webhook can't come along (its key lives in the Keychain), so restored bots start inbox-only.
+                    tx.execute(
+                        "INSERT INTO providers(id, name, wake_kind, calls, description, family, registered) VALUES(?1,?2,'inbox',0,?3,?4,?5)",
+                        params![id, s(&p, "name").unwrap_or_else(|| id.clone()), s(&p, "description"), s(&p, "family"), reg],
+                    )?;
+                    bots += 1;
+                }
+                Some(0) if reg == 1 => {
+                    tx.execute(
+                        "UPDATE providers SET name = ?2, description = ?3, registered = 1 WHERE id = ?1",
+                        params![id, s(&p, "name").unwrap_or_else(|| id.clone()), s(&p, "description")],
+                    )?;
+                }
+                _ => {}
+            }
+        }
+        for r in arr("rooms") {
+            let n = tx.execute(
+                "INSERT OR IGNORE INTO rooms(id, title, kind, workspace_path, branch, allow_edits, updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+                params![s(&r, "id"), s(&r, "title"), s(&r, "kind"), s(&r, "workspace_path"), s(&r, "branch"), r["allow_edits"].as_i64().unwrap_or(0), s(&r, "updated_at")],
+            )?;
+            rooms += n;
+        }
+        for m in arr("room_members") {
+            tx.execute("INSERT OR IGNORE INTO room_members(room_id, provider_id) VALUES(?1,?2)", params![s(&m, "room_id"), s(&m, "provider_id")])?;
+        }
+        for x in arr("sessions") {
+            sessions += tx.execute(
+                "INSERT OR IGNORE INTO sessions(id, room_id, title, status, started_at) VALUES(?1,?2,?3,?4,?5)",
+                params![s(&x, "id"), s(&x, "room_id"), s(&x, "title"), s(&x, "status"), s(&x, "started_at")],
+            )?;
+        }
+        for x in arr("messages") {
+            messages += tx.execute(
+                "INSERT OR IGNORE INTO messages(id, session_id, room_id, sender, recipient, kind, text, code, ticket_id, created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                params![s(&x, "id"), s(&x, "session_id"), s(&x, "room_id"), s(&x, "sender"), s(&x, "recipient"), s(&x, "kind"), s(&x, "text"), s(&x, "code"), s(&x, "ticket_id"), s(&x, "created_at")],
+            )?;
+        }
+        for x in arr("tickets") {
+            let st = s(&x, "status").unwrap_or_default();
+            let st = if st == "pending" || st == "running" { "expired".to_string() } else { st };
+            tx.execute(
+                "INSERT OR IGNORE INTO tickets(id, session_id, room_id, sender, recipient, question, status, hop, then_to, answer, created_at, answered_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+                params![s(&x, "id"), s(&x, "session_id"), s(&x, "room_id"), s(&x, "sender"), s(&x, "recipient"), s(&x, "question"), st, x["hop"].as_i64().unwrap_or(0), s(&x, "then_to"), s(&x, "answer"), s(&x, "created_at"), s(&x, "answered_at")],
+            )?;
+        }
+        for x in arr("context") {
+            tx.execute(
+                "INSERT OR IGNORE INTO context(room_id, kind, content, captured_at) VALUES(?1,?2,?3,?4)",
+                params![s(&x, "room_id"), s(&x, "kind"), s(&x, "content"), s(&x, "captured_at")],
+            )?;
+        }
+        for x in arr("settings") {
+            if let (Some(k), Some(v)) = (s(&x, "key"), s(&x, "value")) {
+                if SYNC_SETTINGS.contains(&k.as_str()) || (k.starts_with("bot.") && k.ends_with(".can_ask")) {
+                    tx.execute("INSERT OR IGNORE INTO settings(key, value) VALUES(?1,?2)", params![k, v])?;
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(json!({"rooms": rooms, "sessions": sessions, "messages": messages, "bots": bots}))
     }
 
     pub fn export_markdown(&self, room: &str) -> Result<PathBuf> {

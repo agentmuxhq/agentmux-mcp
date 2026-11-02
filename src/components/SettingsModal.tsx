@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
 import { api, type Overview, type VaultFile } from "../lib/api";
 import { Badge, Modal, btn, btnPrimary } from "./ui";
+import SyncPanel from "./SyncPanel";
 import TunnelPanel from "./TunnelPanel";
 import { UpdateSettings } from "./UpdateControls";
 
-export type Section = "daemon" | "access" | "vault" | "inspector";
+export type Section = "daemon" | "access" | "sync" | "vault" | "inspector";
 
 function Row({ k, v }: { k: string; v: string }) {
   return (
@@ -138,6 +139,7 @@ export default function SettingsModal({ ov, onClose, initial = "daemon" }: { ov:
   const tabs: [Section, string][] = [
     ["daemon", "Daemon"],
     ["access", "Public access"],
+    ["sync", "Sync"],
     ["vault", "Vault"],
     ["inspector", "MCP Inspector"],
   ];
@@ -165,6 +167,7 @@ export default function SettingsModal({ ov, onClose, initial = "daemon" }: { ov:
         </div>
       )}
       {sec === "access" && <TunnelPanel />}
+      {sec === "sync" && <SyncPanel />}
       {sec === "vault" && <Vault />}
       {sec === "inspector" && <Inspector />}
     </Modal>

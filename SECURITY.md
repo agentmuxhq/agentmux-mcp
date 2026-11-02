@@ -14,6 +14,7 @@ AgentMux lets AI agents on your machine, and Grok bots you connect, ask each oth
 |---|---|---|
 | App launch, then every 6 h (can be turned off) | Update check | `github.com/agentmuxhq/agentmux-mcp/releases` |
 | You ask a Grok bot that has a webhook | The question, room name, shared notes, and the git diff (up to 6,000 chars) | That bot's Grok webhook URL |
+| You switch on **Settings → Sync** | Rooms, sessions, messages, agent names and non-secret settings (diffs only if you opt in), with obvious credentials redacted | The private git repo you chose, using your own git login |
 | A tunnel is running | Requests from your Grok bots to `/mcp` | Through Cloudflare or ngrok to `127.0.0.1:4317` |
 | An agent is woken | The question and context | The local CLI of that agent (Cursor, Claude Code, Codex), which talks to its own vendor as usual |
 

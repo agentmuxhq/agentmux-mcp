@@ -80,6 +80,10 @@ cargo test -p agentmux-core
 
 The `agentmux` CLI also runs headless: `agentmux daemon`, `agentmux status`, `agentmux call <tool> '<json>' --as <agent>`.
 
+## Backup and sync (free)
+
+**Settings → Sync** backs up your rooms, sessions and setup to a private git repo you own (GitHub, GitLab or any git remote) and restores them on another Mac. Bot tokens, webhook keys and tunnel credentials are never included, git diffs are opt-in, obvious credentials in messages are redacted, and AgentMux refuses to sync to a public GitHub or GitLab repo. Syncing only adds to your vault; it never deletes or overwrites anything.
+
 ## Updates
 
 AgentMux shows its version above **Settings**. When a newer release exists, the row turns into **Update to vX.Y.Z**; one click downloads the signed update, installs it and restarts the app. Updates only replace the app itself. Your vault (`~/.agentmux`), Keychain secrets and tunnel settings are untouched, and a backup of the vault is saved to `~/.agentmux/backups/` first (the newest 5 are kept). The download is the full app bundle, verified against a public key built into the app before anything is replaced.

@@ -901,7 +901,7 @@ async fn mcp_post(State(g): State<Arc<Gateway>>, headers: HeaderMap, body: Bytes
         tools.extend_from_slice(ASK_TOOLS);
     }
     let ctx = CallerCtx { agent: agent.clone(), cwd: config::home().to_string_lossy().to_string(), hop: 0 };
-    let mut handle = |mut item: Value| {
+    let handle = |mut item: Value| {
         let g = g.clone();
         let (ctx, tools, agent) = (ctx.clone(), tools.clone(), agent.clone());
         async move {

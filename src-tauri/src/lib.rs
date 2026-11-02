@@ -1,5 +1,5 @@
 use agentmux_core::gateway::Gateway;
-use agentmux_core::{config, connectors, context, daemon, mcp, vault, webhook, CallerCtx, Core};
+use agentmux_core::{config, connectors, context, daemon, mcp, sync, vault, webhook, CallerCtx, Core};
 use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -395,6 +395,41 @@ async fn gateway_rotate_token(state: State<'_, AppState>, agent: Option<String>)
     .map_err(err)?
 }
 
+#[tauri::command]
+fn sync_status(state: State<'_, AppState>) -> Value {
+    sync::status(&state.core.vault)
+}
+
+/// Point sync at a private repo and run the first sync.
+#[tauri::command]
+async fn sync_connect(state: State<'_, AppState>, remote: String, include_diffs: bool, auto: bool) -> Result<Value, String> {
+    let v = state.core.vault.clone();
+    sync::connect(&v, &remote, include_diffs, auto).await.map_err(err)?;
+    let report = sync::sync_now(&v).await.map_err(err)?;
+    state.core.emit("room", json!({"sync": true}));
+    Ok(json!({"status": sync::status(&v), "report": report}))
+}
+
+#[tauri::command]
+async fn sync_now(state: State<'_, AppState>) -> Result<Value, String> {
+    let v = state.core.vault.clone();
+    let result = sync::sync_now(&v).await;
+    state.core.emit("room", json!({"sync": true}));
+    let report = result.map_err(err)?;
+    Ok(json!({"status": sync::status(&v), "report": report}))
+}
+
+#[tauri::command]
+fn sync_set_options(state: State<'_, AppState>, include_diffs: bool, auto: bool) -> Result<Value, String> {
+    sync::set_options(&state.core.vault, include_diffs, auto).map_err(err)?;
+    Ok(sync::status(&state.core.vault))
+}
+
+#[tauri::command]
+fn sync_disconnect(state: State<'_, AppState>) -> Result<Value, String> {
+    sync::disconnect(&state.core.vault).map_err(err)
+}
+
 const AUTO_UPDATE: &str = "updates.auto";
 
 fn auto_update_on(core: &Core) -> bool {
@@ -542,6 +577,21 @@ pub fn run() {
                 }
             });
 
+            // Automatic sync: about 2 minutes after launch, then every 15 minutes, only when switched on.
+            let core3 = core.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(120)).await;
+                loop {
+                    let on = core3.vault.setting("sync.auto").ok().flatten().as_deref() == Some("1") && core3.vault.setting("sync.remote").ok().flatten().is_some();
+                    if on {
+                        if let Err(e) = sync::sync_now(&core3.vault).await {
+                            tracing::warn!("auto sync failed: {e}");
+                        }
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(15 * 60)).await;
+                }
+            });
+
             let quit_gw = gateway.clone();
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
@@ -585,6 +635,11 @@ pub fn run() {
             remove_bot,
             rename_agent,
             set_bot_can_ask,
+            sync_status,
+            sync_connect,
+            sync_now,
+            sync_set_options,
+            sync_disconnect,
             gateway_status,
             gateway_start,
             gateway_stop,
