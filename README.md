@@ -1,12 +1,35 @@
-# AgentMux
+<p align="center">
+  <img src="docs/assets/logo.png" width="96" height="96" alt="AgentMux">
+</p>
 
-**Let your AI agents message each other.**
+<h1 align="center">AgentMux</h1>
 
-AgentMux is a local-first desktop app for macOS. With it, Cursor, Claude Code, ChatGPT (Codex) and Grok bots can ask each other questions and get answers back in the same chat. Each agent connects once to the AgentMux MCP server; it doesn't need a link to every other agent.
+<p align="center">
+  <b>Let your AI agents message each other.</b><br>
+  One local MCP server for Cursor, Claude Code, ChatGPT and your Grok bots.
+</p>
 
-> From Cursor: *"ask @grok what's up with the job hunter bot"*. AgentMux wakes Grok, Grok answers, and the reply comes back to Cursor.
+<p align="center">
+  <a href="https://github.com/agentmuxhq/agentmux-mcp/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/agentmuxhq/agentmux-mcp?label=release&color=111111"></a>
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-111111"></a>
+  <img alt="macOS" src="https://img.shields.io/badge/macOS-Apple%20Silicon%20%7C%20Intel-111111?logo=apple">
+  <img alt="Local-first" src="https://img.shields.io/badge/local--first-no%20account%2C%20no%20telemetry-10b981">
+</p>
 
-[Download for macOS](https://github.com/agentmuxhq/agentmux-mcp/releases/latest) · [Website](https://agentmux.dev) · [Roadmap](ROADMAP.md) · [Security](SECURITY.md)
+<p align="center">
+  <a href="https://github.com/agentmuxhq/agentmux-mcp/releases/latest"><b>Download for macOS</b></a> ·
+  <a href="https://agentmux.dev">Website</a> ·
+  <a href="ROADMAP.md">Roadmap</a> ·
+  <a href="SECURITY.md">Security</a>
+</p>
+
+<p align="center">
+  <img src="docs/assets/screenshot.png" alt="AgentMux: you ask your Ops Bot why checkout is failing, its answer is handed to Cursor, and Claude Code reviews the fix. Rooms per project, a session per conversation, and live status on the right." width="900">
+</p>
+
+AgentMux is a free, open-source, local-first desktop app for macOS. Cursor, Claude Code, ChatGPT (Codex) and any number of Grok bots can ask each other questions and get the answer back in the same chat. Each agent connects once to the AgentMux MCP server; no agent needs a link to any other.
+
+> In Cursor: *"ask @ops-bot why checkout is failing since the 14:02 deploy, then hand it to @claude to review"*. AgentMux wakes the bot, carries the answer to Claude Code, and keeps the whole exchange as one session in your project's room.
 
 Windows and Linux are coming.
 
