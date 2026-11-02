@@ -82,3 +82,29 @@ async fn bots_register_themselves() {
     assert_eq!(g["name"], "AgentMux Manager");
     assert!(tool(&core, &grok, "mux_register", json!({"name": ""})).await.as_str().is_some(), "empty name is rejected");
 }
+
+#[test]
+fn vault_backup_is_complete_and_pruned() {
+    let (core, _) = test_core("backup");
+    core.vault.add_bot("Job Hunter").unwrap();
+    core.vault.set_setting("tunnel.cf_hostname", "mux.example.com").unwrap();
+    let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("bots-backup-out-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let first = core.vault.backup(&dir, "v0.1.0", 2).unwrap();
+    // The copy opens on its own and has the same data.
+    let copy = Vault::open_at(&first, &dir.join("threads")).unwrap();
+    assert!(copy.is_agent("grok:job-hunter"));
+    assert_eq!(copy.setting("tunnel.cf_hostname").unwrap().as_deref(), Some("mux.example.com"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(&first).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+    // Only the newest `keep` backups survive.
+    for _ in 0..3 {
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        core.vault.backup(&dir, "v0.1.0", 2).unwrap();
+    }
+    let n = std::fs::read_dir(&dir).unwrap().flatten().filter(|e| e.path().extension().is_some_and(|x| x == "db")).count();
+    assert_eq!(n, 2);
+}

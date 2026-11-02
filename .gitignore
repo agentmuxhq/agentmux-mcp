@@ -12,3 +12,5 @@ src-tauri/binaries/
 *.pem
 .DS_Store
 .claude/
+release/
+release-notes/*.tmp

@@ -422,8 +422,16 @@ async fn check_update(app: tauri::AppHandle) -> Result<Value, String> {
 
 /// Download, verify (signature against the public key in tauri.conf.json), install, relaunch.
 #[tauri::command]
-async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
+async fn install_update(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let Some(update) = find_update(&app).await? else { return Err("AgentMux is already up to date".into()) };
+    // An update only replaces the app bundle; ~/.agentmux and the Keychain are untouched. Still,
+    // snapshot the vault first, and don't update at all if that fails.
+    let label = format!("v{}", app.package_info().version);
+    let vault = state.core.vault.clone();
+    tauri::async_runtime::spawn_blocking(move || vault.backup(&config::backups_dir(), &label, 5))
+        .await
+        .map_err(err)?
+        .map_err(|e| format!("Update cancelled: couldn't back up your vault first ({e})"))?;
     let mut done: u64 = 0;
     let handle = app.clone();
     update

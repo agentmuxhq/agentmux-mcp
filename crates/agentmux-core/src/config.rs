@@ -24,6 +24,10 @@ pub fn socket_path() -> PathBuf {
     run_dir().join("agentmux.sock")
 }
 
+pub fn backups_dir() -> PathBuf {
+    home().join("backups")
+}
+
 pub fn bin_dir() -> PathBuf {
     home().join("bin")
 }

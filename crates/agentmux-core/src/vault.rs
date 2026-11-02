@@ -558,6 +558,32 @@ impl Vault {
     // ---------- markdown export ----------
 
     /// Write `threads/<room>.md` atomically with 0600 permissions.
+/// Consistent copy of the whole vault (safe while the app is running), for example before an
+    /// update. Written as `<dir>/vault-<label>-<timestamp>.db` (0600); only the newest `keep` are kept.
+    pub fn backup(&self, dir: &Path, label: &str, keep: usize) -> Result<PathBuf> {
+        secure_dir(dir)?;
+        let safe: String = label.chars().map(|c| if c.is_ascii_alphanumeric() || c == '.' { c } else { '-' }).collect();
+        let path = dir.join(format!("vault-{safe}-{}.db", Utc::now().format("%Y%m%d-%H%M%S")));
+        let target = path.to_string_lossy().replace('\'', "''");
+        self.conn.lock().unwrap().execute_batch(&format!("VACUUM INTO '{target}'")).context("vault backup")?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        }
+        let mut old: Vec<PathBuf> = std::fs::read_dir(dir)?
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with("vault-") && n.ends_with(".db")))
+            .collect();
+        old.sort_by_key(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok());
+        let excess = old.len().saturating_sub(keep);
+        for p in old.into_iter().take(excess) {
+            let _ = std::fs::remove_file(p);
+        }
+        Ok(path)
+    }
+
     pub fn export_markdown(&self, room: &str) -> Result<PathBuf> {
         let Some(r) = self.room(room)? else { anyhow::bail!("unknown room {room}") };
         let mut md = format!(

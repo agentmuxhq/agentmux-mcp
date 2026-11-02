@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { RefreshCw } from "lucide-react";
 import { api } from "../lib/api";
 import { btn, btnPrimary } from "./ui";
 
@@ -39,20 +40,72 @@ export function useInstall() {
   return { pct, err, install };
 }
 
-/** Sidebar footer: appears only when a newer version exists. */
-export function UpdateBanner() {
-  const [found] = useAvailableUpdate();
+/** Always-visible row above Settings: current version, and a one-click update when a newer release exists. */
+export function UpdateRow() {
+  const [version, setVersion] = useState<string | null>(null);
+  const [found, setFound] = useAvailableUpdate();
+  const [checking, setChecking] = useState(false);
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
   const { pct, err, install } = useInstall();
-  if (!found) return null;
+
+  const check = async (manual: boolean) => {
+    setChecking(true);
+    if (manual) setNote(null);
+    try {
+      const r = await api.checkUpdate();
+      if (r.available) setFound({ version: r.version!, notes: r.notes });
+      else if (manual) setNote({ ok: true, text: "You're on the latest version" });
+    } catch (e) {
+      // The automatic check stays quiet; only a click reports problems.
+      if (manual) setNote({ ok: false, text: /network|dns|connect|resolve|fetch|request/i.test(String(e)) ? "Couldn't reach GitHub" : `Couldn't check: ${e}` });
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  useEffect(() => {
+    api.appVersion().then((v) => setVersion(v.version)).catch(() => {});
+    const t = setTimeout(() => void check(false), 3000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!note) return;
+    const t = setTimeout(() => setNote(null), 5000);
+    return () => clearTimeout(t);
+  }, [note]);
+
+  const installing = pct !== null;
   return (
-    <div className="border-t border-white/10 bg-emerald-500/10 px-4 py-2.5 text-xs">
-      <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1 text-emerald-200">AgentMux {found.version} is available</span>
-        <button className={btnPrimary} disabled={pct !== null} onClick={install}>
-          {pct === null ? "Update & restart" : pct >= 99 ? "Installing…" : `Downloading ${pct}%`}
+    <div className="border-t border-white/10 px-4 py-2.5 text-xs">
+      {found ? (
+        <button
+          onClick={install}
+          disabled={installing}
+          title={`Downloads the signed update for ${found.version}, installs it and restarts AgentMux. Your rooms, sessions and settings stay as they are, and a backup of your vault is saved first.${found.notes ? `\n\n${found.notes}` : ""}`}
+          className="flex w-full items-center gap-2 rounded-md bg-emerald-500/15 px-3 py-2 text-left font-medium text-emerald-200 hover:bg-emerald-500/25 disabled:opacity-80"
+        >
+          <span className="relative flex h-2 w-2">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+          </span>
+          <span className="min-w-0 flex-1 truncate">
+            {!installing ? `Update to v${found.version.replace(/^v/, "")}` : pct >= 99 ? "Installing, restarting…" : `Downloading… ${pct}%`}
+          </span>
+          {installing && (
+            <span className="h-1 w-14 overflow-hidden rounded-full bg-white/10">
+              <span className="block h-full bg-emerald-400 transition-all" style={{ width: `${Math.max(4, pct)}%` }} />
+            </span>
+          )}
         </button>
-      </div>
-      {err && <div className="mt-1.5 break-words text-red-300">{err}</div>}
+      ) : (
+        <button onClick={() => void check(true)} disabled={checking} className="flex w-full items-center gap-2 text-left text-zinc-500 hover:text-zinc-300" title="Check GitHub for a newer release">
+          <RefreshCw size={12} className={checking ? "animate-spin" : ""} />
+          <span className="min-w-0 flex-1 truncate">{checking ? "Checking for updates…" : version ? `v${version} · Up to date` : "Check for updates"}</span>
+        </button>
+      )}
+      {(note || err) && <div className={`mt-1.5 break-words ${err || note?.ok === false ? "text-red-300" : "text-zinc-500"}`}>{err ?? note?.text}</div>}
     </div>
   );
 }

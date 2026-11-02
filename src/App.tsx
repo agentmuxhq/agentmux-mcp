@@ -18,7 +18,7 @@ import { Avatar, Badge, Dot, btn, btnPrimary } from "./components/ui";
 import ConnectModal from "./components/ConnectModal";
 import NewRoomModal from "./components/NewRoomModal";
 import Starter from "./components/Starter";
-import { UpdateBanner } from "./components/UpdateControls";
+import { UpdateRow } from "./components/UpdateControls";
 import PublicAccessCard from "./components/PublicAccessCard";
 import SettingsModal from "./components/SettingsModal";
 
@@ -315,7 +315,7 @@ export default function App() {
           ))}
         </div>
 
-        <UpdateBanner />
+        <UpdateRow />
         <button onClick={() => setShowSettings("daemon")} className="flex items-center gap-2.5 border-t border-white/10 px-4 py-3 text-xs text-zinc-400 hover:bg-white/5 hover:text-white">
           <Settings size={14} /> Settings
           <span className="ml-auto text-[11px] text-zinc-600">{connectedCount}/4 connected</span>
