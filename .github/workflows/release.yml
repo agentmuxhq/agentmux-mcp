@@ -108,41 +108,16 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release edit "${{ github.ref_name }}" --repo "${{ github.repository }}" --draft=false --latest
 
-  # npm: @agentmuxhq/cli plus one package per Mac type. Skipped until the NPM_TOKEN secret exists.
+  # npm: @agentmuxhq/cli plus one package per Mac type (skipped if NPM_TOKEN isn't available).
   npm:
     needs: publish
-    runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write
-    env:
-      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - name: Check for the npm token
-        id: token
-        run: |
-          if [ -n "$NODE_AUTH_TOKEN" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; else
-            echo "ok=false" >> "$GITHUB_OUTPUT"; echo "::warning::NPM_TOKEN is not set; skipping npm publish."; fi
-      - uses: actions/checkout@v4
-        if: steps.token.outputs.ok == 'true'
-      - uses: actions/setup-node@v4
-        if: steps.token.outputs.ok == 'true'
-        with:
-          node-version: 20
-          registry-url: https://registry.npmjs.org
-      - name: Publish
-        if: steps.token.outputs.ok == 'true'
-        run: |
-          V="${GITHUB_REF_NAME#v}"
-          mkdir -p dl/arm64 dl/x64
-          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" -p "agentmux-cli-$V-darwin-*.tar.gz" -D dl
-          tar -xzf "dl/agentmux-cli-$V-darwin-arm64.tar.gz" -C dl/arm64
-          tar -xzf "dl/agentmux-cli-$V-darwin-x64.tar.gz" -C dl/x64
-          bash scripts/npm-packages.sh "$V" dl/arm64/agentmux dl/x64/agentmux out
-          for P in cli-darwin-arm64 cli-darwin-x64 cli; do
-            npm publish "out/$P" --access public --provenance
-          done
+    uses: ./.github/workflows/npm-publish.yml
+    with:
+      version: ${{ github.ref_name }}
+    secrets: inherit
 
   # Homebrew: updates agentmuxhq/homebrew-tap. Skipped until the HOMEBREW_TAP_TOKEN secret exists.
   homebrew:

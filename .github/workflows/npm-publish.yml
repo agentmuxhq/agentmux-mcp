@@ -1,0 +1,59 @@
+name: Publish to npm
+
+# Publishes @agentmuxhq/cli and its per-Mac binary packages from a GitHub release's CLI tarballs.
+# Called by the release workflow; can also be run by hand for an existing release:
+#   gh workflow run npm-publish.yml -f version=0.2.4
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish, e.g. 0.2.4 (its GitHub release must exist)"
+        required: true
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    env:
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Check for the npm token
+        id: token
+        run: |
+          if [ -n "$NODE_AUTH_TOKEN" ]; then echo "ok=true" >> "$GITHUB_OUTPUT"; else
+            echo "ok=false" >> "$GITHUB_OUTPUT"; echo "::warning::NPM_TOKEN is not available to this repo; skipping npm publish."; fi
+      - uses: actions/checkout@v4
+        if: steps.token.outputs.ok == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.token.outputs.ok == 'true'
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - name: Publish
+        if: steps.token.outputs.ok == 'true'
+        run: |
+          V="${VERSION#v}"
+          mkdir -p dl/arm64 dl/x64
+          gh release download "v$V" --repo "$GITHUB_REPOSITORY" -p "agentmux-cli-$V-darwin-*.tar.gz" -D dl
+          tar -xzf "dl/agentmux-cli-$V-darwin-arm64.tar.gz" -C dl/arm64
+          tar -xzf "dl/agentmux-cli-$V-darwin-x64.tar.gz" -C dl/x64
+          bash scripts/npm-packages.sh "$V" dl/arm64/agentmux dl/x64/agentmux out
+          # Binary packages first, then the launcher that depends on them. Already published = skip,
+          # so a re-run only does what's missing. Paths start with ./ or npm reads them as GitHub repos.
+          for P in cli-darwin-arm64 cli-darwin-x64 cli; do
+            if npm view "@agentmuxhq/$P@$V" version >/dev/null 2>&1; then
+              echo "@agentmuxhq/$P@$V is already published"
+            else
+              npm publish "./out/$P" --access public --provenance
+            fi
+          done

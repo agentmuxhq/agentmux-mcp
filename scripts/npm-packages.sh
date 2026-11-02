@@ -3,8 +3,9 @@
 #   scripts/npm-packages.sh <version> <arm64-binary> <x64-binary> <out-dir>
 # Produces <out-dir>/cli-darwin-arm64, cli-darwin-x64 and cli, ready for `npm publish`.
 set -euo pipefail
+abs() { case "$1" in /*) echo "$1" ;; *) echo "$PWD/$1" ;; esac; }
+V="$1"; ARM="$(abs "$2")"; X64="$(abs "$3")"; OUT="$(abs "$4")"
 cd "$(dirname "$0")/.."
-V="$1"; ARM="$2"; X64="$3"; OUT="$4"
 rm -rf "$OUT"; mkdir -p "$OUT"
 REPO='{"type":"git","url":"git+https://github.com/agentmuxhq/agentmux-mcp.git"}'
 
