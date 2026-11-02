@@ -10,7 +10,26 @@ permissions:
   contents: write
 
 jobs:
+  # Releases must be signed for in-app updates. Without the key (repo secrets
+  # TAURI_SIGNING_PRIVATE_KEY / _PASSWORD) the build is skipped rather than
+  # publishing unsigned, un-updatable files over a release made elsewhere.
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      signed: ${{ steps.key.outputs.signed }}
+    steps:
+      - id: key
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -n "$KEY" ]; then echo "signed=true" >> "$GITHUB_OUTPUT"; else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not set; skipping the release build."
+          fi
+
   build:
+    needs: check
+    if: needs.check.outputs.signed == 'true'
     strategy:
       fail-fast: false
       matrix:
