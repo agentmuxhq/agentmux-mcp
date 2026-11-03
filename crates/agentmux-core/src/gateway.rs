@@ -855,11 +855,62 @@ Delete that DNS record in the Cloudflare dashboard, then use a subdomain of {zon
 
     // ───────── HTTP ─────────
 
+    /// Keep trying to bind the HTTP port until it's free (another AgentMux process may hold it).
+    pub async fn serve_http_retrying(self: Arc<Self>) {
+        let mut warned = false;
+        loop {
+            match self.clone().serve_http().await {
+                Ok(()) => break,
+                Err(e) => {
+                    if !warned {
+                        tracing::info!("HTTP gateway waiting: {e}");
+                        warned = true;
+                    }
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+            }
+        }
+    }
+
+    /// Stop the AgentMux process holding our HTTP port (an old daemon, a dev build) so this one
+    /// can bind it. Never touches a process that isn't AgentMux.
+    pub async fn take_over_port(&self) -> Result<String> {
+        if self.http_bound() {
+            return Ok("AgentMux already has the port.".into());
+        }
+        let Some(h) = port_holder() else {
+            return Ok("The port is free; AgentMux will pick it up in a moment.".into());
+        };
+        if !h.agentmux {
+            bail!("Port {} is used by {} (pid {}), which isn't AgentMux, so it was left alone. Quit that program, or start AgentMux with a different AGENTMUX_PORT.", port(), h.path, h.pid);
+        }
+        if h.pid == std::process::id() {
+            bail!("this process already holds the port");
+        }
+        let kill = |sig: &str| std::process::Command::new("kill").args([sig, &h.pid.to_string()]).status();
+        kill("-TERM")?;
+        for i in 0..40 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if port_holder().is_none_or(|x| x.pid != h.pid) {
+                break;
+            }
+            if i == 29 {
+                let _ = kill("-KILL");
+            }
+        }
+        if port_holder().is_some_and(|x| x.pid == h.pid) {
+            bail!("pid {} did not exit", h.pid);
+        }
+        tracing::info!("stopped AgentMux process {} ({}) holding port {}", h.pid, h.path, port());
+        Ok(format!("Stopped the other AgentMux process (pid {}, {}). This app now serves port {}.", h.pid, h.path, port()))
+    }
+
     pub async fn serve_http(self: Arc<Self>) -> Result<()> {
         let addr = SocketAddr::from(([127, 0, 0, 1], port()));
         let listener = tokio::net::TcpListener::bind(addr).await.map_err(|e| anyhow!("cannot listen on {addr}: {e}"))?;
         *self.http.lock().unwrap() = Some(addr.to_string());
         tracing::info!("agentmux http gateway on http://{addr}/mcp");
+        self.emit();
         let app = Router::new().route("/mcp", post(mcp_post)).route("/healthz", get(healthz)).with_state(self);
         axum::serve(listener, app).await?;
         Ok(())
@@ -1033,4 +1084,24 @@ fn notable_error(provider: &str, line: &str) -> Option<String> {
         return line.contains("ERR_NGROK").then(|| line.chars().take(300).collect());
     }
     (line.contains(" ERR ") || line.contains("failed")).then(|| line.chars().take(300).collect())
+}
+
+/// Who is listening on the gateway port, if anyone.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PortHolder {
+    pub pid: u32,
+    pub path: String,
+    pub agentmux: bool,
+}
+
+pub fn port_holder() -> Option<PortHolder> {
+    let out = std::process::Command::new("lsof")
+        .args(["-nP", &format!("-iTCP:{}", port()), "-sTCP:LISTEN", "-Fp"])
+        .output()
+        .ok()?;
+    let pid: u32 = String::from_utf8_lossy(&out.stdout).lines().find_map(|l| l.strip_prefix('p')?.parse().ok())?;
+    let ps = std::process::Command::new("ps").args(["-o", "comm=", "-p", &pid.to_string()]).output().ok()?;
+    let path = String::from_utf8_lossy(&ps.stdout).trim().to_string();
+    let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    Some(PortHolder { pid, agentmux: matches!(name.as_str(), "agentmux" | "agentmux-app" | "agentmux-cli"), path })
 }

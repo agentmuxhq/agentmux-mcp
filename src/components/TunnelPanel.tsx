@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Check, Copy, Eye, EyeOff, RefreshCw } from "lucide-react";
-import { agentMeta, api, onMuxEvent, type Gateway, type TunnelProvider } from "../lib/api";
+import { agentMeta, api, onMuxEvent, type Gateway, type PortHolder, type TunnelProvider } from "../lib/api";
 import { Badge, Dot, btn, btnPrimary } from "./ui";
 
 type Run = (fn: () => Promise<Gateway>) => Promise<void>;
@@ -184,6 +184,8 @@ export default function TunnelPanel({ compact, agent = "grok" }: { compact?: boo
   const [token, setToken] = useState<string | null>(null);
   const [show, setShow] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
+  const [holder, setHolder] = useState<PortHolder | null>(null);
+  const [note, setNote] = useState<string | null>(null);
 
   // Each bot has its own token; never show one bot's token under another.
   useEffect(() => {
@@ -196,6 +198,27 @@ export default function TunnelPanel({ compact, agent = "grok" }: { compact?: boo
     const off = onMuxEvent((e) => e.kind === "tunnel" && setGw(e.data as Gateway));
     return () => void off.then((f) => f());
   }, []);
+
+  // When the local endpoint couldn't bind, find out who holds the port.
+  const bound = !!gw?.http;
+  useEffect(() => {
+    if (!gw || bound) return setHolder(null);
+    api.portHolder().then(setHolder).catch(() => setHolder(null));
+  }, [gw === null, bound]);
+
+  const takeOver = async () => {
+    if (!holder || !window.confirm(`Stop the other AgentMux process (pid ${holder.pid})?\n${holder.path}`)) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      setNote(await api.takeOverPort());
+      setGw(await api.gatewayStatus());
+    } catch (e) {
+      setErr(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const copy = (what: string, value: string) =>
     navigator.clipboard?.writeText(value).then(() => {
@@ -300,8 +323,31 @@ export default function TunnelPanel({ compact, agent = "grok" }: { compact?: boo
         )}
         <Dot on={gw.state === "running"} pulse={gw.state === "starting"} />
         <Badge tone={tone}>{gw.state}</Badge>
-        {!gw.http && <span className="text-amber-300">local endpoint not running (port {gw.port} busy?)</span>}
+        {!gw.http && !holder && <span className="text-amber-300">local endpoint not running yet (port {gw.port})</span>}
       </div>
+
+      {!gw.http && holder && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-400/30 bg-amber-500/10 p-2.5 text-[11.5px] text-amber-200">
+          <span className="min-w-0 flex-1">
+            {holder.agentmux ? (
+              <>
+                Port {gw.port} is held by another AgentMux process (pid {holder.pid}), so this app can&apos;t serve the tunnel.
+                <span className="block break-all font-mono text-[10.5px] text-amber-200/70">{holder.path}</span>
+              </>
+            ) : (
+              <>
+                Port {gw.port} is used by <span className="font-mono">{holder.path}</span> (pid {holder.pid}), which isn&apos;t AgentMux. Quit that program to use the tunnel.
+              </>
+            )}
+          </span>
+          {holder.agentmux && (
+            <button className={btnPrimary} disabled={busy} onClick={takeOver}>
+              Stop it and use the port
+            </button>
+          )}
+        </div>
+      )}
+      {note && <div className="text-[11.5px] text-emerald-300">{note}</div>}
 
       {gw.error && <pre className="whitespace-pre-wrap rounded-md bg-red-500/10 p-2 font-mono text-[11px] text-red-200">{gw.error}</pre>}
       {err && <pre className="whitespace-pre-wrap rounded-md bg-red-500/10 p-2 font-mono text-[11px] text-red-200">{err}</pre>}

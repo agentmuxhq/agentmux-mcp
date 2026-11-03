@@ -19,22 +19,7 @@ pub async fn run_headless(core: Arc<Core>) -> Result<()> {
     let gw = Gateway::new(core.clone());
 
     // HTTP gateway (Grok bots). The desktop app may hold the port; retry until it's free.
-    let g = gw.clone();
-    tokio::spawn(async move {
-        let mut warned = false;
-        loop {
-            match g.clone().serve_http().await {
-                Ok(()) => break,
-                Err(e) => {
-                    if !warned {
-                        tracing::info!("HTTP gateway waiting: {e}");
-                        warned = true;
-                    }
-                    tokio::time::sleep(Duration::from_secs(10)).await;
-                }
-            }
-        }
-    });
+    tokio::spawn(gw.clone().serve_http_retrying());
 
     // Tunnel: once the HTTP endpoint is up, take over a running tunnel or start the permanent one.
     let g = gw.clone();

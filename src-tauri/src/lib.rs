@@ -382,6 +382,19 @@ async fn tunnel_cf_switch_domain(state: State<'_, AppState>) -> Result<Value, St
     Ok(state.gateway.status())
 }
 
+/// Who holds the HTTP port when this app couldn't bind it.
+#[tauri::command]
+async fn gateway_port_holder() -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(|| json!(agentmux_core::gateway::port_holder())).await.map_err(err)
+}
+
+/// Stop the other AgentMux process holding the HTTP port (refuses anything that isn't AgentMux).
+#[tauri::command]
+async fn gateway_take_over_port(state: State<'_, AppState>) -> Result<String, String> {
+    let gw = state.gateway.clone();
+    gw.take_over_port().await.map_err(err)
+}
+
 #[tauri::command]
 async fn tunnel_verify(state: State<'_, AppState>) -> Result<String, String> {
     state.gateway.verify().await.map_err(err)
@@ -577,11 +590,8 @@ pub fn run() {
                 });
             }
             let gw = gateway.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = gw.serve_http().await {
-                    tracing::warn!("http gateway unavailable: {e}");
-                }
-            });
+            // Retries, so the app picks the port up as soon as another AgentMux process frees it.
+            tauri::async_runtime::spawn(gw.serve_http_retrying());
             // A tunnel from before a restart keeps serving Grok's existing connector URL.
             let gw = gateway.clone();
             tauri::async_runtime::spawn(async move {
@@ -742,6 +752,8 @@ pub fn run() {
             tunnel_cf_create,
             tunnel_cf_switch_domain,
             tunnel_verify,
+            gateway_port_holder,
+            gateway_take_over_port,
             tunnel_cf_token,
             tunnel_cf_reset,
             tunnel_ngrok_setup,

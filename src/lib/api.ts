@@ -118,6 +118,12 @@ export interface Message {
   ticketId: string | null;
   createdAt: string;
 }
+/** The process listening on the HTTP gateway port when this app couldn't bind it. */
+export interface PortHolder {
+  pid: number;
+  path: string;
+  agentmux: boolean;
+}
 export interface Detect {
   agent: AgentId;
   installed: boolean;
@@ -218,6 +224,8 @@ export const api = {
   cfToken: (token: string, hostname: string) => call<Gateway>("tunnel_cf_token", { token, hostname }),
   cfSwitchDomain: () => call<Gateway>("tunnel_cf_switch_domain"),
   tunnelVerify: () => call<string>("tunnel_verify"),
+  portHolder: () => call<PortHolder | null>("gateway_port_holder"),
+  takeOverPort: () => call<string>("gateway_take_over_port"),
   cfReset: () => call<Gateway>("tunnel_cf_reset"),
   ngrokSetup: (authtoken: string | null, domain: string | null) => call<Gateway>("tunnel_ngrok_setup", { authtoken, domain }),
   setAutostart: (on: boolean) => call<Gateway>("tunnel_set_autostart", { on }),
