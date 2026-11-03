@@ -103,8 +103,14 @@ impl Provider for ClaudeCode {
             None => (false, "claude CLI not found".into()),
         }
     }
+    /// Read `~/.claude.json` instead of `claude mcp list`: that command health-checks every MCP
+    /// server by launching it, which is slow and would start AgentMux shims as a side effect.
     fn configured(&self) -> bool {
-        run(&["mcp", "list"]).map(|s| s.contains("agentmux")).unwrap_or(false)
+        let path = std::env::var("AGENTMUX_CLAUDE_JSON").map(PathBuf::from).unwrap_or_else(|_| dirs::home_dir().unwrap_or_default().join(".claude.json"));
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|s| serde_json::from_str::<Value>(&s).ok())
+            .is_some_and(|v| v["mcpServers"]["agentmux"].is_object())
     }
     fn install(&self, link: &Path) -> Result<String> {
         let l = link.to_string_lossy().to_string();

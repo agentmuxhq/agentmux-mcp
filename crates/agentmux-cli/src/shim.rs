@@ -19,11 +19,18 @@ struct Conn {
     w: OwnedWriteHalf,
 }
 
-async fn open(agent: &str, init: Option<&Value>) -> Result<Conn> {
+/// `patient`: a daemon was there a moment ago, so wait for it to come back before spawning one.
+async fn open(agent: &str, init: Option<&Value>, patient: bool) -> Result<Conn> {
     let mut last = None;
-    // A restarting daemon needs a moment to bind the socket again.
-    for _ in 0..20 {
-        match connect_or_spawn().await {
+    // A restarting daemon (app update, takeover) needs a moment to bind the socket again. Wait for
+    // it rather than starting a second daemon that would race it; only spawn as a last resort.
+    for attempt in 0..20 {
+        let conn = if patient && attempt < 19 {
+            tokio::net::UnixStream::connect(crate::config::socket_path()).await.map_err(anyhow::Error::from)
+        } else {
+            connect_or_spawn().await
+        };
+        match conn {
             Ok(s) => {
                 let (r, mut w) = s.into_split();
                 w.write_all(hello(agent).as_bytes()).await?;
@@ -34,7 +41,7 @@ async fn open(agent: &str, init: Option<&Value>) -> Result<Conn> {
                 }
                 return Ok(Conn { lines: BufReader::new(r).lines(), w });
             }
-            Err(e) if crate::config::is_paused() => return Err(e),
+            Err(e) if !patient || crate::config::is_paused() => return Err(e),
             Err(e) => last = Some(e),
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
@@ -56,7 +63,7 @@ pub async fn run(agent: &str) -> Result<()> {
     let mut stdin = BufReader::new(tokio::io::stdin()).lines();
     let mut out = tokio::io::stdout();
     let mut init: Option<Value> = None;
-    let mut conn = Some(open(agent, None).await?);
+    let mut conn = Some(open(agent, None, false).await?);
     // Requests sent to the daemon and not answered yet: id (as JSON text) → (id, method).
     let mut pending: HashMap<String, (Value, String)> = HashMap::new();
 
@@ -74,7 +81,7 @@ pub async fn run(agent: &str) -> Result<()> {
                 }
                 let id = msg.get("id").filter(|i| !i.is_null() && !method.is_empty()).cloned();
                 if conn.is_none() {
-                    conn = open(agent, init.as_ref().filter(|_| method != "initialize")).await.ok();
+                    conn = open(agent, init.as_ref().filter(|_| method != "initialize"), true).await.ok();
                 }
                 let mut sent = match conn.as_mut() {
                     Some(c) => c.w.write_all(format!("{line}\n").as_bytes()).await.is_ok(),
@@ -82,7 +89,7 @@ pub async fn run(agent: &str) -> Result<()> {
                 };
                 if !sent && conn.is_some() {
                     // The daemon died before we noticed: reconnect once and resend.
-                    conn = open(agent, init.as_ref().filter(|_| method != "initialize")).await.ok();
+                    conn = open(agent, init.as_ref().filter(|_| method != "initialize"), true).await.ok();
                     if let Some(c) = conn.as_mut() {
                         sent = c.w.write_all(format!("{line}\n").as_bytes()).await.is_ok();
                     }

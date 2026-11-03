@@ -17,7 +17,7 @@ Full guides live in [`docs/`](docs) and at [agentmux.dev/docs](https://agentmux.
   - `src-tauri`: the desktop shell;
   - `src`: the React UI;
   - `docs`: documentation.
-- **Before a PR:** `cargo test -p agentmux-core` and `bunx tsc --noEmit` must pass. Add a test for new core behaviour. Keep provider-specific code in its provider file.
+- **Before a PR:** `cargo test -p agentmux-core -p agentmux-cli` and `bunx tsc --noEmit` must pass. Add a test for new core behaviour. Keep provider-specific code in its provider file.
 - **Security issues:** don't open public issues. See [SECURITY.md](SECURITY.md).
 
 By contributing you agree that your work is licensed under Apache-2.0.

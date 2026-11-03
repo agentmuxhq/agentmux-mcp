@@ -40,6 +40,7 @@ cargo run -p agentmux-cli -- call mux_contacts --as claude
 
 ```sh
 cargo test -p agentmux-core     # core: tickets, sessions, gateway, webhooks, providers, hook, sync
+cargo test -p agentmux-cli      # the agentmux binary: shim reconnect across daemon restarts, login service
 bunx tsc --noEmit               # UI types
 ```
 
@@ -47,7 +48,7 @@ The core tests never touch your vault, Keychain or real agents. They use temp va
 
 ## Pull requests
 
-- `cargo test -p agentmux-core` and `bunx tsc --noEmit` must pass (CI runs both).
+- `cargo test -p agentmux-core -p agentmux-cli` and `bunx tsc --noEmit` must pass (CI runs both).
 - Keep provider-specific code inside its provider file.
 - Never log or print secrets. Tokens and keys go to the Keychain through `secrets.rs`.
 - Security issues: don't open a public issue; see the [security model](./security.md).

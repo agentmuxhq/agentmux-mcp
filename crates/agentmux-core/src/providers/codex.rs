@@ -35,8 +35,13 @@ impl Provider for Codex {
             None => (false, "chatgpt CLI not found".into()),
         }
     }
+    /// Read the config instead of `codex mcp list`, which may launch the servers to check them.
     fn configured(&self) -> bool {
-        run(&["mcp", "list"]).map(|s| s.contains("agentmux")).unwrap_or(false)
+        let home = std::env::var("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|_| dirs::home_dir().unwrap_or_default().join(".codex"));
+        std::fs::read_to_string(home.join("config.toml"))
+            .ok()
+            .and_then(|s| s.parse::<toml::Table>().ok())
+            .is_some_and(|t| t.get("mcp_servers").and_then(|m| m.get("agentmux")).is_some())
     }
     fn install(&self, link: &Path) -> Result<String> {
         let l = link.to_string_lossy().to_string();

@@ -81,6 +81,10 @@ pub fn set_option(agent: &str, name: &str, on: bool) -> Result<String> {
 /// Once per provider, switch on the context hook for agents that were connected before hooks
 /// existed. Remembered in the vault, so a hook the user turned off is never re-added.
 pub fn adopt_context_hooks(vault: &crate::Vault) {
+    // A scratch vault (tests, development) must never edit the user's real agent settings.
+    if std::env::var_os("AGENTMUX_HOME").is_some() {
+        return;
+    }
     for p in crate::providers::all().into_iter().filter(|p| p.caps().context_hook) {
         let key = format!("hook.{}.adopted", p.info().id);
         if vault.setting(&key).ok().flatten().is_some() || !p.configured() {
