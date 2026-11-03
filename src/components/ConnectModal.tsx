@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Check, Copy, Radio } from "lucide-react";
-import { agentMeta, ago, api, getCatalog, isGrok, providerOf, type Detect, type GrokWebhook, type Overview } from "../lib/api";
+import { agentMeta, ago, api, getCatalog, isGrok, providerOf, providerState, type Detect, type GrokWebhook, type Overview } from "../lib/api";
 import TunnelPanel from "./TunnelPanel";
 import { Avatar, Badge, Dot, Modal, btn, btnPrimary } from "./ui";
 
@@ -97,16 +97,7 @@ export default function ConnectModal({ ov, initial = "cursor", startAdding, repl
     }
   };
 
-  /** A tile's real state: registered in the agent's config (from detection) and seen over MCP. */
-  const tileState = (id: string, seen: boolean): { label: string; on: boolean; pulse?: boolean } => {
-    // Remote providers (Grok) are set up in their own app, so only the handshake tells.
-    if (providerOf(id)?.remoteAccess) return seen ? { label: "connected", on: true } : { label: "not connected", on: false };
-    const dd = detect[id];
-    if (!dd) return { label: "checking…", on: false };
-    if (!dd.installed) return { label: "not found", on: false };
-    if (!dd.configured) return { label: "not registered", on: false };
-    return seen ? { label: "connected", on: true } : { label: "restart to connect", on: false, pulse: true };
-  };
+  const tileState = (id: string, seen: boolean) => (detect[id] || providerOf(id)?.remoteAccess ? providerState(id, seen, detect[id]) : { label: "checking…", on: false });
   const registered = manual || !!d?.configured;
 
   return (

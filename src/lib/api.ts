@@ -39,6 +39,19 @@ export function providerOf(id: string): CatalogEntry | undefined {
   return catalog.find((c) => c.id === id) ?? catalog.find((c) => c.id === base && c.multiInstance);
 }
 
+/**
+ * One provider's real state, shared by the sidebar and the Connect screen: is AgentMux registered
+ * in the agent's config (from detection), and has the agent connected over MCP since.
+ * Without detection yet, falls back to the handshake alone.
+ */
+export function providerState(id: string, seen: boolean, d?: Detect): { label: string; on: boolean; pulse?: boolean } {
+  // Remote providers (Grok) are set up in their own app, so only the handshake tells.
+  if (providerOf(id)?.remoteAccess || !d) return seen ? { label: "connected", on: true } : { label: "not connected", on: false };
+  if (!d.installed) return { label: "not found", on: false };
+  if (!d.configured) return { label: "not registered", on: false };
+  return seen ? { label: "connected", on: true } : { label: "restart to connect", on: false, pulse: true };
+}
+
 export const isGrok = (id: string) => providerOf(id)?.id === "grok";
 
 /** Display info for any agent id, including bots and their self-registered names. */

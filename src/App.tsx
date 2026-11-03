@@ -8,6 +8,8 @@ import {
   clock,
   inTauri,
   isGrok,
+  providerState,
+  type Detect,
   onMuxEvent,
   setKnownProviders,
   type Message,
@@ -89,6 +91,16 @@ function ContextBlock({ label, icon, body }: { label: string; icon: React.ReactN
 
 export default function App() {
   const [ov, setOv] = useState<Overview | null>(null);
+  // Whether AgentMux is registered in each agent's config. Shells out, so: on load, every minute, and after Connect changes.
+  const [detect, setDetect] = useState<Record<string, Detect>>({});
+  const loadDetect = useCallback(() => {
+    api.detect().then((d) => setDetect(Object.fromEntries(d.map((x) => [x.agent, x])))).catch(() => {});
+  }, []);
+  useEffect(() => {
+    loadDetect();
+    const t = setInterval(loadDetect, 60_000);
+    return () => clearInterval(t);
+  }, [loadDetect]);
   const [roomId, setRoomId] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -275,18 +287,21 @@ export default function App() {
               <Plus size={14} />
             </button>
           </div>
-          {ov.providers.map((p) => (
+          {ov.providers.map((p) => {
+            const st = providerState(p.id, !!p.connectedAt, detect[p.id]);
+            return (
             <button key={p.id} onClick={() => (setConnectInit({ agent: p.id }), setShowConnect(true))} className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left hover:bg-white/5">
               <Avatar id={p.id} size={26} />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-[13px] font-medium">{agentMeta(p.id).name}</div>
                 <div className="truncate text-[11px] text-zinc-500">
-                  {p.description || (p.connectedAt ? `seen ${ago(p.lastSeen)}` : isGrok(p.id) && !p.registered ? "not connected · Grok Bot" : "not connected")}
+                  {st.on ? p.description || `seen ${ago(p.lastSeen)}` : isGrok(p.id) && !p.registered ? "not connected · Grok Bot" : st.label}
                 </div>
               </div>
-              <Dot on={!!p.connectedAt} />
+              <Dot on={st.on} pulse={st.pulse} />
             </button>
-          ))}
+            );
+          })}
           <button
             onClick={() => (setConnectInit({ agent: "grok", addBot: true }), setShowConnect(true))}
             className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[12px] text-zinc-500 hover:bg-white/5 hover:text-zinc-300"
@@ -612,7 +627,7 @@ export default function App() {
         </div>
       </aside>
 
-      {showConnect && <ConnectModal ov={ov} initial={connectInit.agent} startAdding={connectInit.addBot} replies={replies} onClose={() => setShowConnect(false)} onChanged={refresh} />}
+      {showConnect && <ConnectModal ov={ov} initial={connectInit.agent} startAdding={connectInit.addBot} replies={replies} onClose={() => (setShowConnect(false), loadDetect())} onChanged={() => (refresh(), loadDetect())} />}
       {showNewRoom && (
         <NewRoomModal
           ov={ov}
