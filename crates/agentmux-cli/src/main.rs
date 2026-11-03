@@ -9,6 +9,7 @@ use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
+mod hook;
 mod service_mac;
 
 #[derive(Parser)]
@@ -76,8 +77,28 @@ enum Cmd {
         #[arg(long)]
         agent: String,
     },
-    /// Register AgentMux as an MCP server in an agent (cursor|claude|chatgpt|grok|all).
-    Connect { agent: String },
+    /// Register AgentMux as an MCP server in an agent (cursor|claude|chatgpt|grok|<custom>|all).
+    Connect {
+        agent: String,
+        /// Claude Code: don't add the context hook to ~/.claude/settings.json.
+        #[arg(long)]
+        no_hook: bool,
+    },
+    /// Agent hooks. `agentmux hook claude-code` is what Claude Code runs (prints what's new);
+    /// `--on` / `--off` add or remove the hook.
+    Hook {
+        target: String,
+        #[arg(long)]
+        on: bool,
+        #[arg(long)]
+        off: bool,
+    },
+    /// Custom providers from TOML manifests: list | add <file.toml> | remove <id>
+    Provider {
+        #[arg(default_value = "list")]
+        action: String,
+        arg: Option<String>,
+    },
     /// Remove AgentMux from an agent's MCP config.
     Disconnect { agent: String },
     /// Call an MCP tool through the daemon (for testing): agentmux call mux_contacts
@@ -120,7 +141,15 @@ async fn main() -> Result<()> {
         Cmd::Uninstall { keep_configs } => uninstall(keep_configs),
         Cmd::Daemon => agentmux_core::service::run_headless(Core::new()?).await,
         Cmd::Mcp { agent } => shim(&agent).await,
-        Cmd::Connect { agent } => each(&agent, connectors::install),
+        Cmd::Connect { agent, no_hook } => {
+            each(&agent, connectors::install)?;
+            if no_hook && (agent == "claude" || agent == "all") {
+                println!("{}", connectors::set_option("claude", "hook", false)?);
+            }
+            Ok(())
+        }
+        Cmd::Hook { target, on, off } => hook::run(&target, on, off),
+        Cmd::Provider { action, arg } => provider_cmd(&action, arg.as_deref()),
         Cmd::Disconnect { agent } => each(&agent, connectors::uninstall),
         Cmd::Call { tool, args, as_agent } => call(&as_agent, &tool, &args).await,
         Cmd::Run { cmd } => run(cmd).await,
@@ -128,8 +157,8 @@ async fn main() -> Result<()> {
 }
 
 fn each(agent: &str, f: fn(&str) -> Result<String>) -> Result<()> {
-    let ids: Vec<&str> = if agent == "all" { vec!["cursor", "claude", "chatgpt", "grok"] } else { vec![agent] };
-    for id in ids {
+    let ids: Vec<String> = if agent == "all" { config::agent_ids() } else { vec![agent.to_string()] };
+    for id in ids.iter().map(String::as_str) {
         match f(id) {
             Ok(msg) => println!("✓ {id}: {msg}"),
             Err(e) => println!("✗ {id}: {e}"),
@@ -264,7 +293,8 @@ async fn init(no_service: bool, no_connect: bool) -> Result<()> {
     println!("✓ agentmux available at {}", bin.display());
 
     if !no_connect {
-        for id in ["cursor", "claude", "chatgpt"] {
+        let ids: Vec<String> = agentmux_core::providers::all().iter().filter(|p| p.caps().wake == "cli").map(|p| p.info().id).collect();
+        for id in ids.iter().map(String::as_str) {
             let d = connectors::detect(id);
             let name = config::agent_name(id);
             if d["installed"] != true {
@@ -571,4 +601,31 @@ async fn sync_cmd(action: &str, remote: Option<&str>, diffs: bool, manual: bool)
         _ => bail!("use: agentmux sync status | connect <remote> [--diffs] [--manual] | now | off"),
     }
     Ok(())
+}
+
+fn provider_cmd(action: &str, arg: Option<&str>) -> Result<()> {
+    use agentmux_core::providers::{self, manifest};
+    match (action, arg) {
+        ("list", _) => {
+            for p in providers::all() {
+                let i = p.info();
+                let c = p.caps();
+                let custom = !providers::builtin().iter().any(|b| b.info().id == i.id);
+                println!("{:<10} {:<14} wake: {:<8}{}", i.id, i.name, c.wake, if custom { " (custom)" } else { "" });
+            }
+            println!("\nCustom providers live in {}", manifest::dir().display());
+            Ok(())
+        }
+        ("add", Some(file)) => {
+            let id = manifest::add(Path::new(file))?;
+            println!("✓ added provider '{id}'. Restart AgentMux, then: agentmux connect {id}");
+            Ok(())
+        }
+        ("remove", Some(id)) => {
+            manifest::remove(id)?;
+            println!("✓ removed provider '{id}'");
+            Ok(())
+        }
+        _ => bail!("usage: agentmux provider list | add <file.toml> | remove <id>"),
+    }
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Check, Copy, Radio } from "lucide-react";
-import { AGENT_IDS, AGENTS, agentMeta, ago, api, isGrok, type Detect, type FixedAgent, type GrokWebhook, type Overview } from "../lib/api";
+import { agentMeta, ago, api, getCatalog, isGrok, providerOf, type Detect, type GrokWebhook, type Overview } from "../lib/api";
 import TunnelPanel from "./TunnelPanel";
 import { Avatar, Badge, Dot, Modal, btn, btnPrimary } from "./ui";
 
@@ -14,8 +14,8 @@ interface Props {
 }
 
 export default function ConnectModal({ ov, initial = "cursor", startAdding, replies, onClose, onChanged }: Props) {
-  // The tab is a fixed provider; Grok has one entry per bot, picked separately.
-  const [sel, setSel] = useState<FixedAgent>(isGrok(initial) ? "grok" : (initial as FixedAgent));
+  // The tab is a provider type; a multi-instance one (Grok) has one entry per bot, picked separately.
+  const [sel, setSel] = useState<string>(providerOf(initial)?.id ?? initial);
   const [bot, setBot] = useState(isGrok(initial) ? initial : "grok");
   const [adding, setAdding] = useState(!!startAdding);
   const [newName, setNewName] = useState("");
@@ -51,6 +51,10 @@ export default function ConnectModal({ ov, initial = "cursor", startAdding, repl
 
   const p = ov.providers.find((x) => x.id === target);
   const d = detect[sel];
+  const cat = providerOf(sel);
+  const catalog = ov.catalog?.length ? ov.catalog : getCatalog();
+  // Remote providers (Grok) are added in their own app's settings, not by AgentMux.
+  const manual = !!cat?.remoteAccess;
   const handshake = !!p?.connectedAt;
   const reply = ticket ? replies[ticket] : undefined;
   const meta = agentMeta(target);
@@ -95,9 +99,9 @@ export default function ConnectModal({ ov, initial = "cursor", startAdding, repl
 
   return (
     <Modal title="Connect a provider" onClose={onClose}>
-      <div className="mb-5 grid grid-cols-4 gap-2">
-        {AGENT_IDS.map((id) => {
-          const group = ov.providers.filter((x) => (id === "grok" ? isGrok(x.id) : x.id === id));
+      <div className="mb-5 grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-2">
+        {catalog.map(({ id, name, multiInstance }) => {
+          const group = ov.providers.filter((x) => (multiInstance ? providerOf(x.id)?.id === id : x.id === id));
           const pr = { connectedAt: group.find((x) => x.connectedAt)?.connectedAt ?? null };
           return (
             <button
@@ -108,7 +112,7 @@ export default function ConnectModal({ ov, initial = "cursor", startAdding, repl
               }`}
             >
               <Avatar id={id} size={32} />
-              <span className="font-medium">{AGENTS[id].name}</span>
+              <span className="font-medium">{name}</span>
               <span className="flex items-center gap-1 text-[10px] text-zinc-500">
                 <Dot on={!!pr?.connectedAt} />
                 {pr?.connectedAt ? "connected" : "not connected"}
@@ -126,15 +130,15 @@ export default function ConnectModal({ ov, initial = "cursor", startAdding, repl
             <Badge tone={d?.configured ? "green" : "zinc"}>{d?.configured ? "registered" : "not registered"}</Badge>
             <Badge>{p?.wakeKind === "cli" ? "wake: headless CLI" : p?.wakeKind === "webhook" ? "wake: webhook" : "wake: inbox only"}</Badge>
           </div>
-          <div className="text-zinc-500">{AGENTS[sel].hint}</div>
+          <div className="text-zinc-500">{cat?.hint}</div>
           {d && <div className="mt-1 break-all font-mono text-[11px] text-zinc-500">{d.detail}</div>}
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <button className={btnPrimary} disabled={busy || sel === "grok"} title={sel === "grok" ? "Grok Bot is configured by hand — see the steps below" : undefined} onClick={() => run(() => api.connect(target), "Connect")}>
+          <button className={btnPrimary} disabled={busy || manual} title={manual ? `${cat?.name} is configured by hand — see the steps below` : undefined} onClick={() => run(() => api.connect(target), "Connect")}>
             {d?.configured ? "Re-register" : "Connect"}
           </button>
-          {sel !== "grok" && d?.configured && (
+          {!manual && d?.configured && (
             <button className={btn} disabled={busy} onClick={() => run(() => api.disconnect(target), "Disconnect")}>
               Disconnect
             </button>
@@ -160,6 +164,25 @@ export default function ConnectModal({ ov, initial = "cursor", startAdding, repl
           <pre className={`whitespace-pre-wrap rounded-md p-3 font-mono text-[11px] ${msg.ok ? "bg-emerald-500/10 text-emerald-200" : "bg-red-500/10 text-red-200"}`}>
             {msg.text}
           </pre>
+        )}
+
+        {d?.contextHook && (
+          <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-white/10 p-3 text-xs">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={!!d.options?.hook}
+              disabled={busy}
+              onChange={(e) => run(() => api.setProviderOption(sel, "hook", e.target.checked), "Hook")}
+            />
+            <span className="text-zinc-300">
+              Tell {cat?.name} what&apos;s new each time you send a message
+              <span className="mt-0.5 block text-[11px] leading-relaxed text-zinc-500">
+                Adds a hook to ~/.claude/settings.json. When another agent answers after {cat?.name} stopped waiting, the reply shows up in the same chat on your next message.
+                AgentMux&apos;s own headless runs skip it.
+              </span>
+            </span>
+          </label>
         )}
 
         {sel === "grok" && (

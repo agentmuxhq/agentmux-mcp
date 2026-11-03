@@ -122,7 +122,7 @@ export default function App() {
   const refresh = useCallback(async () => {
     try {
       const o = await api.overview();
-      setKnownProviders(o.providers);
+      setKnownProviders(o.providers, o.catalog);
       setOv(o);
       setRoomId((cur) => (cur && o.rooms.some((r) => r.id === cur) ? cur : (o.rooms[0]?.id ?? null)));
     } catch (e) {

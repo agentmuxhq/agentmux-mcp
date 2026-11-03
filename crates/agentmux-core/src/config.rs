@@ -63,28 +63,22 @@ pub fn webhook_timeout_secs() -> u64 {
 /// A new question to the same agent within this window continues the same session.
 pub const SESSION_CONTINUE_MINUTES: i64 = 30;
 
-pub const AGENTS: [(&str, &str); 4] = [
-    ("cursor", "Cursor"),
-    ("grok", "Grok Bot"),
-    ("claude", "Claude Code"),
-    ("chatgpt", "ChatGPT"),
-];
+/// Fixed (non-bot) agents: every registered provider's id. See `providers::all`.
+pub fn agent_ids() -> Vec<String> {
+    crate::providers::all().iter().map(|p| p.info().id).collect()
+}
 
 pub fn is_known_agent(id: &str) -> bool {
-    AGENTS.iter().any(|(a, _)| *a == id)
+    crate::providers::is_known(id)
 }
 
 pub fn agent_name(id: &str) -> String {
-    AGENTS
-        .iter()
-        .find(|(a, _)| *a == id)
-        .map(|(_, n)| n.to_string())
-        .unwrap_or_else(|| id.to_string())
+    crate::providers::display_name(id)
 }
 
-/// `grok` (the original bot) or any `grok:<slug>` bot.
+/// An instance of a multi-instance provider: `grok` itself or `grok:<slug>`.
 pub fn is_grok_family(id: &str) -> bool {
-    id == "grok" || id.starts_with("grok:")
+    crate::providers::multi_instance(id)
 }
 
 /// Lowercase a-z/0-9/- slug, at most 40 chars; empty if nothing usable is left.

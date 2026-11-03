@@ -4,35 +4,53 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 
 /** `cursor`, `claude`, `chatgpt`, `grok`, or an added bot such as `grok:job-hunter`. */
 export type AgentId = string;
-export type FixedAgent = "cursor" | "grok" | "claude" | "chatgpt";
+/** A provider type as the backend registry describes it (`providers::catalog`). */
+export interface CatalogEntry {
+  id: string;
+  name: string;
+  color: string;
+  hint: string;
+  multiInstance: boolean;
+  remoteAccess: boolean;
+  wake: "cli" | "webhook" | "inbox";
+  contextHook: boolean;
+}
 
-export const AGENTS: Record<FixedAgent, { name: string; handle: string; color: string; hint: string }> = {
-  cursor: { name: "Cursor", handle: "@cursor", color: "#3B82F6", hint: "MCP stdio · ~/.cursor/mcp.json" },
-  grok: { name: "Grok Bot", handle: "@grok", color: "#D97736", hint: "MCP stdio · added in Grok Bot settings" },
-  claude: { name: "Claude Code", handle: "@claude", color: "#10B981", hint: "MCP stdio · claude mcp add" },
-  chatgpt: { name: "ChatGPT", handle: "@chatgpt", color: "#8B5CF6", hint: "MCP stdio · ~/.codex/config.toml" },
-};
-export const AGENT_IDS = Object.keys(AGENTS) as FixedAgent[];
-
-export const isGrok = (id: string) => id === "grok" || id.startsWith("grok:");
+/** Shown before the first overview arrives; the backend catalog replaces it. */
+const FALLBACK: CatalogEntry[] = [
+  { id: "cursor", name: "Cursor", color: "#3B82F6", hint: "MCP stdio · ~/.cursor/mcp.json", multiInstance: false, remoteAccess: false, wake: "cli", contextHook: false },
+  { id: "grok", name: "Grok Bot", color: "#D97736", hint: "MCP stdio · added in Grok Bot settings", multiInstance: true, remoteAccess: true, wake: "webhook", contextHook: false },
+  { id: "claude", name: "Claude Code", color: "#10B981", hint: "MCP stdio · claude mcp add", multiInstance: false, remoteAccess: false, wake: "cli", contextHook: true },
+  { id: "chatgpt", name: "ChatGPT", color: "#8B5CF6", hint: "MCP stdio · ~/.codex/config.toml", multiInstance: false, remoteAccess: false, wake: "cli", contextHook: false },
+];
 
 let known: Provider[] = [];
-/** Called whenever the overview refreshes so names/colours of added bots resolve everywhere. */
-export const setKnownProviders = (ps: Provider[]) => {
+let catalog: CatalogEntry[] = FALLBACK;
+/** Called whenever the overview refreshes so names/colours of added bots and custom providers resolve everywhere. */
+export const setKnownProviders = (ps: Provider[], cat?: CatalogEntry[]) => {
   known = ps;
+  if (cat?.length) catalog = cat;
 };
+export const getCatalog = () => catalog;
+
+/** The provider type an agent id belongs to: `grok:job-hunter` → grok. */
+export function providerOf(id: string): CatalogEntry | undefined {
+  const base = id.split(":")[0];
+  return catalog.find((c) => c.id === id) ?? catalog.find((c) => c.id === base && c.multiInstance);
+}
+
+export const isGrok = (id: string) => providerOf(id)?.id === "grok";
 
 /** Display info for any agent id, including bots and their self-registered names. */
 export function agentMeta(id: string): { name: string; handle: string; color: string; subtitle: string | null } {
   const p = known.find((x) => x.id === id);
-  const fixed = AGENTS[id as FixedAgent];
-  const family = isGrok(id) ? AGENTS.grok : fixed;
-  const name = p?.name ?? fixed?.name ?? id;
+  const type = providerOf(id);
+  const name = p?.name ?? type?.name ?? id;
   return {
     name,
     handle: `@${id}`,
-    color: family?.color ?? "#6B7280",
-    subtitle: isGrok(id) && name !== AGENTS.grok.name ? "Grok Bot" : null,
+    color: type?.color ?? "#6B7280",
+    subtitle: type?.multiInstance && type.id !== id && name !== type.name ? type.name : null,
   };
 }
 
@@ -87,6 +105,7 @@ export interface Overview {
   socket: string;
   home: string;
   providers: Provider[];
+  catalog: CatalogEntry[];
   rooms: Room[];
 }
 export interface Message {
@@ -104,6 +123,8 @@ export interface Detect {
   installed: boolean;
   configured: boolean;
   detail: string;
+  contextHook: boolean;
+  options: Record<string, boolean>;
 }
 export interface VaultFile {
   filename: string;
@@ -153,6 +174,7 @@ export const api = {
   detect: () => call<Detect[]>("detect_providers"),
   connect: (id: string) => call<string>("connect_provider", { id }),
   disconnect: (id: string) => call<string>("disconnect_provider", { id }),
+  setProviderOption: (id: string, name: string, on: boolean) => call<string>("set_provider_option", { id, name, on }),
   messages: (sessionId: string) => call<Message[]>("get_messages", { sessionId }),
   send: (room: string, session: string | null, to: string, text: string, then?: string) =>
     call<string>("send_message", { room, session, to, text, then: then ?? null }),

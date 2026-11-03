@@ -81,6 +81,7 @@ fn get_overview(state: State<'_, AppState>) -> Result<Value, String> {
         "socket": config::socket_path().to_string_lossy(),
         "home": config::home().to_string_lossy(),
         "providers": core.vault.providers().map_err(err)?,
+        "catalog": agentmux_core::providers::catalog(),
         "rooms": rooms,
     }))
 }
@@ -89,7 +90,7 @@ fn get_overview(state: State<'_, AppState>) -> Result<Value, String> {
 #[tauri::command]
 async fn detect_providers() -> Result<Value, String> {
     tauri::async_runtime::spawn_blocking(|| {
-        let v: Vec<Value> = config::AGENTS.iter().map(|(id, _)| connectors::detect(id)).collect();
+        let v: Vec<Value> = agentmux_core::providers::all().iter().map(|p| agentmux_core::providers::describe(p.as_ref())).collect();
         json!(v)
     })
     .await
@@ -99,6 +100,11 @@ async fn detect_providers() -> Result<Value, String> {
 #[tauri::command]
 async fn connect_provider(id: String) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || connectors::install(&id).map_err(err)).await.map_err(err)?
+}
+
+#[tauri::command]
+async fn set_provider_option(id: String, name: String, on: bool) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || connectors::set_option(&id, &name, on).map_err(err)).await.map_err(err)?
 }
 
 #[tauri::command]
@@ -609,6 +615,8 @@ pub fn run() {
             if let Err(e) = connectors::ensure_bin_link() {
                 tracing::warn!("could not create ~/.agentmux/bin/agentmux link: {e}");
             }
+            let vault = core.vault.clone();
+            tauri::async_runtime::spawn_blocking(move || connectors::adopt_context_hooks(&vault));
 
             let update_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
             // Quiet background check: ~10 s after launch, then every 6 h. Errors stay silent.
@@ -699,6 +707,7 @@ pub fn run() {
             detect_providers,
             connect_provider,
             disconnect_provider,
+            set_provider_option,
             get_messages,
             send_message,
             ping_provider,

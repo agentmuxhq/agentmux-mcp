@@ -7,7 +7,9 @@ const SUPPORTED: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 
 const INSTRUCTIONS: &str = "AgentMux connects your AI tools (Cursor, Grok, Claude Code, ChatGPT) over a local vault. \
 Use mux_contacts to see who is reachable, mux_ask_peer to ask another agent a question (it returns their reply), \
-mux_inbox/mux_reply to answer questions addressed to you, and mux_read_context / mux_publish_context for shared git diff, terminal output and notes.";
+mux_inbox/mux_reply to answer questions addressed to you, and mux_read_context / mux_publish_context for shared git diff, terminal output and notes. \
+If mux_ask_peer comes back pending, keep calling mux_get_reply (it waits up to 110 s each time) until it is answered, unless the user asks you to stop. \
+At the start of a turn, call mux_updates if you may be waiting on another agent: it lists replies and questions that arrived since you last checked.";
 
 fn tool(name: &str, desc: &str, props: Value, required: &[&str]) -> Value {
     json!({"name": name, "description": desc,
@@ -34,7 +36,7 @@ pub fn tools() -> Vec<Value> {
         ),
         tool(
             "mux_ask_peer",
-            "Ask another agent a question. AgentMux wakes them, and this returns their reply (or a pending ticket if they take longer than wait_s).",
+            "Ask another agent a question. AgentMux wakes them, and this returns their reply (or a pending ticket if they take longer than wait_s; then keep calling mux_get_reply until it is answered).",
             json!({
                 "to": {"type": "string", "description": "Agent id or name, e.g. cursor, claude, chatgpt, grok:job-hunter (see mux_contacts)"},
                 "question": {"type": "string"},
@@ -47,7 +49,7 @@ pub fn tools() -> Vec<Value> {
         ),
         tool(
             "mux_get_reply",
-            "Fetch (optionally waiting for) the reply to an earlier mux_ask_peer ticket.",
+            "Fetch (optionally waiting for) the reply to an earlier mux_ask_peer ticket. If it is still pending, call this again with wait_s up to 110 until it is answered, unless the user asks you to stop.",
             json!({"ticket": {"type": "string"}, "wait_s": {"type": "integer"}}),
             &["ticket"],
         ),
@@ -56,6 +58,12 @@ pub fn tools() -> Vec<Value> {
             "Tell AgentMux your display name and a one-line description of what you do, so other agents can find and address you.",
             json!({"name": {"type": "string"}, "description": {"type": "string"}}),
             &["name"],
+        ),
+        tool(
+            "mux_updates",
+            "What's new for you since you last checked: answers to your questions (including late ones) and new questions addressed to you.",
+            json!({"mark_read": {"type": "boolean", "description": "Advance your read cursor (default true)"}}),
+            &[],
         ),
         tool("mux_inbox", "List questions other agents have asked you that are still unanswered.", json!({}), &[]),
         tool(
@@ -208,6 +216,12 @@ async fn call_tool(core: &Arc<Core>, ctx: &CallerCtx, name: &str, a: &Value) -> 
             Ok(json!({"registered": true, "agent": ctx.agent, "name": core.vault.agent_name(&ctx.agent)}))
         }
         "mux_inbox" => Ok(json!(core.vault.inbox(&ctx.agent)?)),
+        "mux_updates" => {
+            let mark = a.get("mark_read").and_then(|v| v.as_bool()).unwrap_or(true);
+            let items = core.vault.updates_for(&ctx.agent, mark)?;
+            Ok(json!({"count": items.len(), "updates": items,
+                      "note": if items.is_empty() { "Nothing new." } else { "Questions addressed to you: answer them with mux_reply." }}))
+        }
         "mux_reply" => {
             let id = arg_str(a, "ticket").unwrap_or("");
             let text = arg_str(a, "text").unwrap_or("");

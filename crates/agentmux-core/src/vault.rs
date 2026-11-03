@@ -108,16 +108,23 @@ impl Vault {
             let _ = std::fs::set_permissions(db, std::fs::Permissions::from_mode(0o600));
         }
         let v = Vault { conn: Mutex::new(conn), threads_dir: threads_dir.to_path_buf() };
-        for (id, name) in config::AGENTS {
-            v.conn.lock().unwrap().execute(
-                "INSERT OR IGNORE INTO providers(id, name, wake_kind, calls, family) VALUES(?1, ?2, ?3, 0, ?4)",
-                params![id, name, default_wake_kind(id), family_of(id)],
-            )?;
-        }
+        v.seed_providers()?;
         Ok(v)
     }
 
     // ---------- providers ----------
+
+    /// Make sure every registered provider (built-in or manifest) has a row. Cheap; safe to repeat.
+    pub fn seed_providers(&self) -> Result<()> {
+        for p in crate::providers::all() {
+            let i = p.info();
+            self.conn.lock().unwrap().execute(
+                "INSERT OR IGNORE INTO providers(id, name, wake_kind, calls, family) VALUES(?1, ?2, ?3, 0, ?4)",
+                params![i.id, i.name, default_wake_kind(&i.id), family_of(&i.id)],
+            )?;
+        }
+        Ok(())
+    }
 
     /// Mark a provider as having completed a real MCP handshake.
     pub fn mark_connected(&self, id: &str) -> Result<()> {
@@ -190,7 +197,7 @@ impl Vault {
 
     /// A fixed agent or a bot that exists in `providers`.
     pub fn is_agent(&self, id: &str) -> bool {
-        config::AGENTS.iter().any(|(a, _)| *a == id)
+        config::is_known_agent(id)
             || self
                 .conn
                 .lock()
@@ -556,6 +563,43 @@ impl Vault {
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
+    /// What's new for `agent` since its read cursor: answers to its questions (late ones too) and
+    /// questions addressed to it. Oldest first, at most 20. With `mark_read`, the cursor advances.
+    /// The first read starts one day back so a new install doesn't replay all history.
+    pub fn updates_for(&self, agent: &str, mark_read: bool) -> Result<Vec<Value>> {
+        let key = format!("updates.{agent}.seen");
+        let since = self.setting(&key)?.unwrap_or_else(|| (Utc::now() - chrono::Duration::days(1)).to_rfc3339());
+        let mut out: Vec<Value> = {
+            let c = self.conn.lock().unwrap();
+            let mut st = c.prepare(
+                "SELECT id, 'answer', recipient, status, question, answer, room_id, answered_at FROM tickets
+                   WHERE sender = ?1 AND status IN ('answered','failed') AND answered_at > ?2
+                 UNION ALL
+                 SELECT id, 'question', sender, status, question, NULL, room_id, created_at FROM tickets
+                   WHERE recipient = ?1 AND status IN ('pending','running') AND created_at > ?2
+                 ORDER BY 8 DESC LIMIT 20",
+            )?;
+            let rows = st.query_map(params![agent, since], |r| {
+                Ok(json!({"ticket": r.get::<_, String>(0)?, "kind": r.get::<_, String>(1)?,
+                          "with": r.get::<_, String>(2)?, "status": r.get::<_, String>(3)?,
+                          "question": r.get::<_, String>(4)?, "answer": r.get::<_, Option<String>>(5)?,
+                          "room": r.get::<_, String>(6)?, "at": r.get::<_, String>(7)?}))
+            })?;
+            rows.collect::<std::result::Result<_, _>>()?
+        };
+        out.reverse();
+        for u in out.iter_mut() {
+            let w = u["with"].as_str().unwrap_or("").to_string();
+            u["withName"] = json!(self.agent_name(&w));
+        }
+        if mark_read {
+            if let Some(last) = out.last().and_then(|u| u["at"].as_str()) {
+                self.set_setting(&key, last)?;
+            }
+        }
+        Ok(out)
+    }
+
     // ---------- settings (non-secret) ----------
 
     pub fn setting(&self, key: &str) -> Result<Option<String>> {
@@ -682,7 +726,7 @@ impl Vault {
 
         for p in arr("providers") {
             let id = s(&p, "id").unwrap_or_default();
-            if id.is_empty() || !(config::AGENTS.iter().any(|(a, _)| *a == id) || id.starts_with("grok:")) {
+            if id.is_empty() || !(config::is_known_agent(&id) || config::is_grok_family(&id)) {
                 continue;
             }
             let have: Option<i64> = tx.query_row("SELECT registered FROM providers WHERE id = ?1", params![id], |r| r.get(0)).optional()?;
@@ -786,8 +830,8 @@ impl Vault {
     }
 }
 
-fn family_of(id: &str) -> &str {
-    if config::is_grok_family(id) { "grok" } else { id }
+fn family_of(id: &str) -> String {
+    crate::providers::get(id).map(|p| p.info().id).unwrap_or_else(|| id.to_string())
 }
 
 /// Add columns introduced after the first release; safe to run on every open.
@@ -810,10 +854,10 @@ fn migrate(conn: &Connection) -> Result<()> {
 }
 
 fn default_wake_kind(id: &str) -> &'static str {
-    match id {
-        // Grok has no headless CLI; until its webhook is configured it picks questions up via mux_inbox.
-        id if config::is_grok_family(id) => "inbox",
-        _ => "cli",
+    // A webhook provider (Grok) has no headless CLI; until its webhook is set up it uses the inbox.
+    match crate::providers::get(id).map(|p| p.caps().wake) {
+        Some("cli") => "cli",
+        _ => "inbox",
     }
 }
 

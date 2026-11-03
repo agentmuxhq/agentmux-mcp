@@ -5,6 +5,7 @@ pub mod core;
 pub mod daemon;
 pub mod gateway;
 pub mod mcp;
+pub mod providers;
 pub mod secrets;
 pub mod service;
 pub mod sync;

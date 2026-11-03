@@ -5,9 +5,6 @@ use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::Command;
 
-const CODEX_BUNDLED: &str =
-    "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex";
-
 fn extra_dirs() -> Vec<PathBuf> {
     let mut v = Vec::new();
     if let Some(h) = dirs::home_dir() {
@@ -55,49 +52,6 @@ pub fn find_bin(name: &str) -> Option<PathBuf> {
     dirs.into_iter().map(|d| d.join(name)).find(|p| p.is_file())
 }
 
-/// Resolve the executable used to wake (and configure) an agent.
-pub fn agent_binary(agent: &str) -> Option<PathBuf> {
-    match agent {
-        "cursor" => find_bin("cursor-agent").or_else(|| find_bin("agent")),
-        "claude" => find_bin("claude"),
-        "chatgpt" => {
-            let p = PathBuf::from(CODEX_BUNDLED);
-            if p.is_file() { Some(p) } else { find_bin("codex") }
-        }
-        _ => None,
-    }
-}
-
-pub fn build_args(agent: &str, prompt: &str, workspace: &str, allow_edits: bool) -> Option<Vec<String>> {
-    let s = |x: &str| x.to_string();
-    match agent {
-        "cursor" => {
-            let mut a = vec![s("-p"), prompt.to_string(), s("--trust"), s("--workspace"), s(workspace), s("--output-format"), s("text")];
-            if !allow_edits {
-                a.extend([s("--mode"), s("ask")]);
-            }
-            Some(a)
-        }
-        "claude" => Some(vec![
-            s("-p"),
-            prompt.to_string(),
-            s("--permission-mode"),
-            s(if allow_edits { "acceptEdits" } else { "plan" }),
-        ]),
-        "chatgpt" => Some(vec![
-            s("exec"),
-            s("-s"),
-            s(if allow_edits { "workspace-write" } else { "read-only" }),
-            s("--skip-git-repo-check"),
-            s("--ephemeral"),
-            s("-C"),
-            s(workspace),
-            prompt.to_string(),
-        ]),
-        _ => None,
-    }
-}
-
 const ENV_ALLOW: &[&str] = &[
     "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "TMPDIR", "TERM", "CURSOR_API_KEY", "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY", "CODEX_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
@@ -111,10 +65,14 @@ pub async fn run_wake(
     allow_edits: bool,
     extra_env: &[(String, String)],
 ) -> Result<String> {
-    let bin = agent_binary(agent).ok_or_else(|| anyhow!("no CLI found to wake @{agent}"))?;
-    let args = build_args(agent, prompt, workspace, allow_edits).ok_or_else(|| anyhow!("@{agent} has no CLI waker"))?;
+    let ticket = extra_env.iter().find(|(k, _)| k == "AGENTMUX_TICKET").map(|(_, v)| v.as_str()).unwrap_or("");
+    let provider = crate::providers::get(agent).ok_or_else(|| anyhow!("unknown agent @{agent}"))?;
+    let spec = provider
+        .wake(&crate::providers::WakeRequest { prompt, workspace, allow_edits, ticket })
+        .ok_or_else(|| anyhow!("no CLI found to wake @{agent}"))?;
+    let bin = spec.bin;
     let mut cmd = Command::new(&bin);
-    cmd.args(&args)
+    cmd.args(&spec.args)
         .current_dir(if std::path::Path::new(workspace).is_dir() { workspace } else { "." })
         .env_clear()
         .env("PATH", spawn_path())

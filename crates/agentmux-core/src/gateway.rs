@@ -33,7 +33,7 @@ fn token_secret(agent: &str) -> String {
     }
 }
 /// Tools a remote (tunnelled) caller may use.
-pub const REMOTE_TOOLS: &[&str] = &["mux_whoami", "mux_contacts", "mux_register", "mux_inbox", "mux_reply"];
+pub const REMOTE_TOOLS: &[&str] = &["mux_whoami", "mux_contacts", "mux_register", "mux_inbox", "mux_reply", "mux_updates"];
 /// Added for a bot that has been switched on to start conversations.
 pub const ASK_TOOLS: &[&str] = &["mux_ask_peer", "mux_get_reply"];
 /// Per bot: at most this many new questions to other agents per hour.
@@ -125,8 +125,8 @@ impl Gateway {
 
     /// The bearer token one Grok bot presents. Created on first use and kept in the OS keychain.
     pub fn token(&self, agent: &str) -> Result<String> {
-        if !crate::config::is_grok_family(agent) {
-            bail!("'{agent}' is not a Grok bot");
+        if !crate::providers::remote_access(agent) {
+            bail!("'{agent}' does not accept remote connections");
         }
         if let Some(t) = self.tokens.lock().unwrap().get(agent) {
             return Ok(t.clone());
@@ -145,8 +145,8 @@ impl Gateway {
 
     /// Replace a bot's token; anything holding the old one is locked out immediately.
     pub fn rotate_token(&self, agent: &str) -> Result<String> {
-        if !crate::config::is_grok_family(agent) {
-            bail!("'{agent}' is not a Grok bot");
+        if !crate::providers::remote_access(agent) {
+            bail!("'{agent}' does not accept remote connections");
         }
         let t = new_token();
         secrets::set(&token_secret(agent), &t)?;

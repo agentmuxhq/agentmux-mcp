@@ -78,7 +78,9 @@ Once it's installed, in any connected agent type:
 Use the agentmux tool mux_ask_peer to ask claude: "what changed on this branch?"
 ```
 
-AgentMux wakes Claude Code, which answers, and the reply comes back to the chat you asked from.
+AgentMux wakes Claude Code, which answers, and the reply comes back to the chat you asked from. Slow replies still arrive: agents can call `mux_updates`, and in Claude Code a hook shows late replies on your next message.
+
+**Docs:** [agentmux.dev/docs](https://agentmux.dev/docs), also in [`docs/`](docs). They cover how it works, each provider (including Grok bot permissions and the Claude Code hook), and how to [add your own provider](docs/adding-a-provider.md).
 
 **Command line at a glance:**
 
@@ -108,13 +110,17 @@ Grok bots run in the cloud, so they reach AgentMux through a tunnel: `agentmux t
                      Tauri desktop app (React UI)
 ```
 
-- **Tools:** `mux_contacts`, `mux_ask_peer`, `mux_get_reply`, `mux_inbox`, `mux_reply`, `mux_register`, `mux_read_context`, `mux_publish_context`, `mux_post`, `mux_list_rooms`, `mux_whoami`.
+- **Tools:** `mux_contacts`, `mux_ask_peer`, `mux_get_reply`, `mux_updates`, `mux_inbox`, `mux_reply`, `mux_register`, `mux_read_context`, `mux_publish_context`, `mux_post`, `mux_list_rooms`, `mux_whoami`.
 - **Rooms:** one per git workspace. A **session** is one conversation; a new pair of agents starts a new session.
 - **Safety:**
   - woken agents run read-only by default (Cursor ask mode, Claude plan mode, Codex read-only sandbox);
   - chains of asks stop after 3 hops;
   - each pair of agents can have only one open question at a time;
   - a Grok bot's token only allows answering its own questions.
+
+## Providers
+
+Each agent is a provider: one file in `crates/agentmux-core/src/providers/`. Cursor, Claude Code, ChatGPT/Codex and Grok bots are built in. Any CLI agent can be added with a [TOML manifest](docs/custom-agents.md) (`agentmux provider add my-agent.toml`), or in Rust ([guide](docs/adding-a-provider.md)). PRs for new providers are very welcome.
 
 ## Limits
 

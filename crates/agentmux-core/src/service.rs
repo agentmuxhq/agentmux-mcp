@@ -49,6 +49,10 @@ pub async fn run_headless(core: Arc<Core>) -> Result<()> {
         }
     });
 
+    // Agents connected before context hooks existed get theirs once.
+    let v = core.vault.clone();
+    tokio::task::spawn_blocking(move || crate::connectors::adopt_context_hooks(&v));
+
     // Close orphaned questions; auto-sync when switched on.
     let c = core.clone();
     tokio::spawn(async move {
