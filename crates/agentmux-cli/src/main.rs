@@ -10,6 +10,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 mod hook;
+mod shim;
 mod service_mac;
 
 #[derive(Parser)]
@@ -140,7 +141,7 @@ async fn main() -> Result<()> {
         Cmd::Sync { action, remote, diffs, manual } => sync_cmd(&action, remote.as_deref(), diffs, manual).await,
         Cmd::Uninstall { keep_configs } => uninstall(keep_configs),
         Cmd::Daemon => agentmux_core::service::run_headless(Core::new()?).await,
-        Cmd::Mcp { agent } => shim(&agent).await,
+        Cmd::Mcp { agent } => shim::run(&agent).await,
         Cmd::Connect { agent, no_hook } => {
             each(&agent, connectors::install)?;
             if no_hook && (agent == "claude" || agent == "all") {
@@ -197,24 +198,6 @@ fn hello(agent: &str) -> String {
     let hop: i64 = std::env::var("AGENTMUX_HOP").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
     let cwd = std::env::current_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|_| ".".into());
     format!("{}\n", json!({"agentmux_hello": {"agent": agent, "cwd": cwd, "hop": hop}}))
-}
-
-async fn shim(agent: &str) -> Result<()> {
-    let stream = connect_or_spawn().await?;
-    let (mut r, mut w) = stream.into_split();
-    w.write_all(hello(agent).as_bytes()).await?;
-    let up = async move {
-        let mut stdin = tokio::io::stdin();
-        let _ = tokio::io::copy(&mut stdin, &mut w).await;
-        let _ = w.shutdown().await; // let in-flight replies drain, then the daemon closes
-    };
-    let down = async move {
-        let mut stdout = tokio::io::stdout();
-        let _ = tokio::io::copy(&mut r, &mut stdout).await;
-        let _ = stdout.flush().await;
-    };
-    tokio::join!(up, down);
-    Ok(())
 }
 
 async fn rpc(
