@@ -433,17 +433,7 @@ async fn status() -> Result<()> {
 // ───────── tunnel (talks to the running daemon) ─────────
 
 async fn control(cmd: &str) -> Result<Value> {
-    let stream = UnixStream::connect(config::socket_path()).await.context("AgentMux isn't running (agentmux start)")?;
-    let (r, mut w) = stream.into_split();
-    w.write_all(format!("{}\n{}\n", json!({"agentmux_control": true}), json!({"cmd": cmd})).as_bytes()).await?;
-    let mut lines = BufReader::new(r).lines();
-    let line = lines.next_line().await?.ok_or_else(|| anyhow::anyhow!("no answer from AgentMux (it may be an older version)"))?;
-    let v: Value = serde_json::from_str(&line)?;
-    if v["ok"] == true {
-        Ok(v["result"].clone())
-    } else {
-        bail!("{}", v["error"].as_str().unwrap_or("failed"))
-    }
+    agentmux_core::daemon::control_request(cmd).await
 }
 
 async fn tunnel(action: &str) -> Result<()> {

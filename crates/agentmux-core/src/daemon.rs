@@ -186,7 +186,22 @@ async fn handle_conn(core: Arc<Core>, gateway: Option<Arc<Gateway>>, stream: Uni
     Ok(())
 }
 
-/// One request per connection: `{"cmd": "tunnel.status" | "tunnel.start" | "tunnel.stop" | "tunnel.verify" | "ping"}`.
+/// Send one control command to whichever AgentMux process owns the socket.
+pub async fn control_request(cmd: &str) -> Result<Value> {
+    let stream = UnixStream::connect(config::socket_path()).await.map_err(|_| anyhow::anyhow!("AgentMux isn't running (agentmux start)"))?;
+    let (r, mut w) = stream.into_split();
+    w.write_all(format!("{}\n{}\n", json!({"agentmux_control": true}), json!({"cmd": cmd})).as_bytes()).await?;
+    let mut lines = BufReader::new(r).lines();
+    let line = lines.next_line().await?.ok_or_else(|| anyhow::anyhow!("no answer from AgentMux (it may be an older version)"))?;
+    let v: Value = serde_json::from_str(&line)?;
+    if v["ok"] == true {
+        Ok(v["result"].clone())
+    } else {
+        bail!("{}", v["error"].as_str().unwrap_or("failed"))
+    }
+}
+
+/// One request per connection: `{"cmd": "tunnel.status" | "tunnel.start" | "tunnel.stop" | "tunnel.verify" | "tokens.reload" | "ping"}`.
 /// Only reachable through the 0600 socket, i.e. by this macOS user.
 async fn control(
     gateway: Option<Arc<Gateway>>,
@@ -207,6 +222,11 @@ async fn control(
         ("tunnel.stop", Some(g)) => {
             g.stop().await;
             json!({"ok": true, "result": g.status()})
+        }
+        // Another process rotated or removed a bot token in the Keychain: drop cached ones.
+        ("tokens.reload", Some(g)) => {
+            g.reload_tokens();
+            json!({"ok": true, "result": true})
         }
         ("tunnel.verify", Some(g)) => match g.verify().await {
             Ok(m) => json!({"ok": true, "result": m}),

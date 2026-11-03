@@ -13,6 +13,8 @@ pub(crate) struct AppState {
     pub(crate) core: Arc<Core>,
     pub(crate) gateway: Arc<Gateway>,
     pub(crate) daemon: Arc<Mutex<String>>,
+    /// Tunnel status from the AgentMux process that owns the socket, while this app stands by ("external").
+    pub(crate) remote_tunnel: Arc<Mutex<Option<Value>>>,
     switch: Arc<daemon::Switch>,
     /// Newest version GitHub offered, if it is newer than this one.
     pub(crate) update: Arc<Mutex<Option<String>>>,
@@ -51,6 +53,43 @@ pub(crate) async fn power(app: &tauri::AppHandle, on: bool) -> Result<String, St
 #[tauri::command]
 async fn set_daemon(app: tauri::AppHandle, on: bool) -> Result<String, String> {
     power(&app, on).await
+}
+
+/// While another AgentMux process owns the socket (the login service), it also owns the HTTP port
+/// and the tunnel, so tunnel actions go to it over the control channel instead of this process.
+pub(crate) fn external(st: &AppState) -> bool {
+    st.daemon.lock().unwrap().as_str() == "external"
+}
+
+/// The tunnel status to show: the owning process's when external, else this app's.
+pub(crate) fn tunnel_status(st: &AppState) -> Value {
+    if external(st) {
+        if let Some(mut v) = st.remote_tunnel.lock().unwrap().clone() {
+            v["remote"] = json!(true);
+            return v;
+        }
+    }
+    st.gateway.status()
+}
+
+/// Run a tunnel command here, or in the owning process when external.
+pub(crate) async fn tunnel_cmd(st: &AppState, cmd: &str) -> Result<Value, String> {
+    if external(st) {
+        let r = daemon::control_request(cmd).await.map_err(err)?;
+        if cmd != "tunnel.verify" {
+            *st.remote_tunnel.lock().unwrap() = Some(r.clone());
+            st.core.emit("tunnel", tunnel_status(st));
+        }
+        return Ok(r);
+    }
+    let gw = st.gateway.clone();
+    match cmd {
+        "tunnel.start" => gw.start().await.map_err(err)?,
+        "tunnel.stop" => gw.stop().await,
+        "tunnel.verify" => return gw.verify().await.map(|m| json!(m)).map_err(err),
+        _ => {}
+    }
+    Ok(gw.status())
 }
 
 fn err<T: std::fmt::Display>(e: T) -> String {
@@ -317,7 +356,11 @@ async fn remove_bot(state: State<'_, AppState>, id: String) -> Result<(), String
         Ok::<(), String>(())
     })
     .await
-    .map_err(err)?
+    .map_err(err)??;
+    if external(&state) {
+        let _ = daemon::control_request("tokens.reload").await;
+    }
+    Ok(())
 }
 
 /// Let a Grok bot start conversations with other agents over the tunnel (off by default).
@@ -337,32 +380,31 @@ fn rename_agent(state: State<'_, AppState>, id: String, name: String, descriptio
 
 #[tauri::command]
 fn gateway_status(state: State<'_, AppState>) -> Value {
-    state.gateway.status()
+    tunnel_status(&state)
 }
 
 #[tauri::command]
 async fn gateway_start(state: State<'_, AppState>) -> Result<Value, String> {
-    let gw = state.gateway.clone();
-    gw.start().await.map_err(err)?;
-    Ok(gw.status())
+    tunnel_cmd(&state, "tunnel.start").await?;
+    Ok(tunnel_status(&state))
 }
 
 #[tauri::command]
 async fn gateway_stop(state: State<'_, AppState>) -> Result<Value, String> {
-    state.gateway.stop().await;
-    Ok(state.gateway.status())
+    tunnel_cmd(&state, "tunnel.stop").await?;
+    Ok(tunnel_status(&state))
 }
 
 #[tauri::command]
 fn gateway_set_provider(state: State<'_, AppState>, provider: String, ngrok_domain: Option<String>) -> Result<Value, String> {
     state.gateway.set_provider(&provider, ngrok_domain.as_deref()).map_err(err)?;
-    Ok(state.gateway.status())
+    Ok(tunnel_status(&state))
 }
 
 #[tauri::command]
 async fn tunnel_cf_login(state: State<'_, AppState>) -> Result<Value, String> {
     state.gateway.cf_login().await.map_err(err)?;
-    Ok(state.gateway.status())
+    Ok(tunnel_status(&state))
 }
 
 /// One click: create the permanent tunnel, then swap it in for any temporary one and start it.
@@ -371,15 +413,15 @@ async fn tunnel_cf_create(state: State<'_, AppState>, hostname: String) -> Resul
     let gw = state.gateway.clone();
     // Create first: if that fails, the temporary tunnel Grok uses keeps running.
     gw.cf_create(&hostname).await.map_err(err)?;
-    gw.stop().await;
-    gw.start().await.map_err(err)?;
-    Ok(gw.status())
+    tunnel_cmd(&state, "tunnel.stop").await?;
+    tunnel_cmd(&state, "tunnel.start").await?;
+    Ok(tunnel_status(&state))
 }
 
 #[tauri::command]
 async fn tunnel_cf_switch_domain(state: State<'_, AppState>) -> Result<Value, String> {
     state.gateway.cf_switch_domain().await.map_err(err)?;
-    Ok(state.gateway.status())
+    Ok(tunnel_status(&state))
 }
 
 /// Who holds the HTTP port when this app couldn't bind it.
@@ -397,35 +439,38 @@ async fn gateway_take_over_port(state: State<'_, AppState>) -> Result<String, St
 
 #[tauri::command]
 async fn tunnel_verify(state: State<'_, AppState>) -> Result<String, String> {
-    state.gateway.verify().await.map_err(err)
+    let r = tunnel_cmd(&state, "tunnel.verify").await?;
+    Ok(r.as_str().unwrap_or("reachable").to_string())
 }
 
 #[tauri::command]
 async fn tunnel_cf_token(state: State<'_, AppState>, token: String, hostname: String) -> Result<Value, String> {
     let gw = state.gateway.clone();
-    tauri::async_runtime::spawn_blocking(move || gw.cf_use_token(&token, &hostname).map(|_| gw.status()).map_err(err))
+    tauri::async_runtime::spawn_blocking(move || gw.cf_use_token(&token, &hostname).map_err(err))
         .await
-        .map_err(err)?
+        .map_err(err)??;
+    Ok(tunnel_status(&state))
 }
 
 #[tauri::command]
 fn tunnel_cf_reset(state: State<'_, AppState>) -> Result<Value, String> {
     state.gateway.cf_reset().map_err(err)?;
-    Ok(state.gateway.status())
+    Ok(tunnel_status(&state))
 }
 
 #[tauri::command]
 async fn tunnel_ngrok_setup(state: State<'_, AppState>, authtoken: Option<String>, domain: Option<String>) -> Result<Value, String> {
     let gw = state.gateway.clone();
-    tauri::async_runtime::spawn_blocking(move || gw.ngrok_setup(authtoken.as_deref(), domain.as_deref()).map(|_| gw.status()).map_err(err))
+    tauri::async_runtime::spawn_blocking(move || gw.ngrok_setup(authtoken.as_deref(), domain.as_deref()).map_err(err))
         .await
-        .map_err(err)?
+        .map_err(err)??;
+    Ok(tunnel_status(&state))
 }
 
 #[tauri::command]
 fn tunnel_set_autostart(state: State<'_, AppState>, on: bool) -> Result<Value, String> {
     state.gateway.set_autostart(on).map_err(err)?;
-    Ok(state.gateway.status())
+    Ok(tunnel_status(&state))
 }
 
 /// The URL and bearer token to paste into Grok's connector. The only command that returns the token.
@@ -433,9 +478,10 @@ fn tunnel_set_autostart(state: State<'_, AppState>, on: bool) -> Result<Value, S
 async fn gateway_reveal(state: State<'_, AppState>, agent: Option<String>) -> Result<Value, String> {
     let gw = state.gateway.clone();
     let agent = bot(agent);
+    let url = tunnel_status(&state)["mcpUrl"].clone();
     tauri::async_runtime::spawn_blocking(move || {
         let token = gw.token(&agent).map_err(err)?;
-        Ok::<Value, String>(json!({"token": token, "mcpUrl": gw.status()["mcpUrl"]}))
+        Ok::<Value, String>(json!({"token": token, "mcpUrl": url}))
     })
     .await
     .map_err(err)?
@@ -445,12 +491,18 @@ async fn gateway_reveal(state: State<'_, AppState>, agent: Option<String>) -> Re
 async fn gateway_rotate_token(state: State<'_, AppState>, agent: Option<String>) -> Result<Value, String> {
     let gw = state.gateway.clone();
     let agent = bot(agent);
-    tauri::async_runtime::spawn_blocking(move || {
+    let url = tunnel_status(&state)["mcpUrl"].clone();
+    let r = tauri::async_runtime::spawn_blocking(move || {
         let token = gw.rotate_token(&agent).map_err(err)?;
-        Ok::<Value, String>(json!({"token": token, "mcpUrl": gw.status()["mcpUrl"]}))
+        Ok::<Value, String>(json!({"token": token, "mcpUrl": url}))
     })
     .await
-    .map_err(err)?
+    .map_err(err)??;
+    // The serving process caches tokens; make it drop the old one now.
+    if external(&state) {
+        let _ = daemon::control_request("tokens.reload").await;
+    }
+    Ok(r)
 }
 
 #[tauri::command]
@@ -575,6 +627,24 @@ pub fn run() {
             let core = Core::new()?;
             let paused = config::is_paused();
             let status = Arc::new(Mutex::new(if paused { "off" } else { "embedded" }.to_string()));
+            // While another AgentMux process serves (external), mirror its tunnel status every 3 s.
+            let remote_tunnel: Arc<Mutex<Option<Value>>> = Arc::new(Mutex::new(None));
+            let (st, rt, c) = (status.clone(), remote_tunnel.clone(), core.clone());
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    let ext = st.lock().unwrap().as_str() == "external";
+                    let next = if ext { daemon::control_request("tunnel.status").await.ok() } else { None };
+                    let changed = *rt.lock().unwrap() != next;
+                    if changed {
+                        *rt.lock().unwrap() = next.clone();
+                        if let Some(mut v) = next {
+                            v["remote"] = json!(true);
+                            c.emit("tunnel", v);
+                        }
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                }
+            });
             let gateway = Gateway::new(core.clone());
             // The app's daemon also answers `agentmux tunnel …` from the CLI.
             let switch = daemon::Switch::with_gateway(core.clone(), gateway.clone());
@@ -695,7 +765,7 @@ pub fn run() {
                 .on_menu_event(|app, ev| tray::on_event(app, ev.id.as_ref()))
                 .build(app)?;
 
-            app.manage(AppState { core: core.clone(), gateway, daemon: status, switch, update: update_slot, tray_sig: Mutex::new(None) });
+            app.manage(AppState { core: core.clone(), gateway, daemon: status.clone(), remote_tunnel: remote_tunnel.clone(), switch, update: update_slot, tray_sig: Mutex::new(None) });
 
             // Keep the menu current: on any event (debounced), and at least every 30 s so "5m ago" stays true.
             let handle = app.handle().clone();

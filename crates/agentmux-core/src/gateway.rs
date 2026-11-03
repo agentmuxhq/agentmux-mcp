@@ -154,6 +154,11 @@ impl Gateway {
         Ok(t)
     }
 
+    /// Forget every cached token; the Keychain is read again on the next request.
+    pub fn reload_tokens(&self) {
+        self.tokens.lock().unwrap().clear();
+    }
+
     /// Drop a removed bot's token.
     pub fn forget(&self, agent: &str) {
         let _ = secrets::delete(&token_secret(agent));

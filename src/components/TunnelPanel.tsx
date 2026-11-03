@@ -323,6 +323,7 @@ export default function TunnelPanel({ compact, agent = "grok" }: { compact?: boo
         )}
         <Dot on={gw.state === "running"} pulse={gw.state === "starting"} />
         <Badge tone={tone}>{gw.state}</Badge>
+        {gw.remote && <span className="text-zinc-500">served by the AgentMux background service</span>}
         {!gw.http && !holder && <span className="text-amber-300">local endpoint not running yet (port {gw.port})</span>}
       </div>
 

@@ -147,6 +147,8 @@ export interface GrokWebhook {
 }
 export type TunnelProvider = "cloudflared" | "ngrok";
 export interface Gateway {
+  /** Served by another AgentMux process (the login service) that owns the port; this app relays to it. */
+  remote?: boolean;
   provider: TunnelProvider;
   ngrokDomain: string | null;
   ngrokAuthtoken: boolean;

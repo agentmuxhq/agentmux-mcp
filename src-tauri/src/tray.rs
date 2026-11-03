@@ -3,7 +3,7 @@
 //! The menu is described as plain data first (`entries`), compared with the last one shown, and only
 //! rebuilt when something changed, so it stays cheap to refresh on every event.
 
-use crate::{power, show_main, AppState};
+use crate::{power, show_main, tunnel_cmd, tunnel_status, AppState};
 use agentmux_core::sync;
 use serde_json::json;
 use tauri::menu::{CheckMenuItem, Menu, MenuBuilder, MenuItem, SubmenuBuilder};
@@ -41,7 +41,7 @@ fn entries(app: &AppHandle) -> Vec<E> {
     let st = app.state::<AppState>();
     let daemon = st.daemon.lock().unwrap().clone();
     let on = daemon == "embedded" || daemon == "external";
-    let gw = st.gateway.status();
+    let gw = tunnel_status(&st);
     let sy = sync::status(&st.core.vault);
     let providers = st.core.vault.providers().unwrap_or_default();
     let version = app.package_info().version.to_string();
@@ -182,12 +182,12 @@ pub fn on_event(app: &AppHandle, id: &str) {
             });
         }
         "tunnel_toggle" => {
-            let gw = st.gateway.clone();
             tauri::async_runtime::spawn(async move {
-                let live = matches!(gw.status()["state"].as_str(), Some("running") | Some("starting"));
+                let st = app2.state::<AppState>();
+                let live = matches!(tunnel_status(&st)["state"].as_str(), Some("running") | Some("starting"));
                 if live {
-                    gw.stop().await;
-                } else if let Err(e) = gw.start().await {
+                    let _ = tunnel_cmd(&st, "tunnel.stop").await;
+                } else if let Err(e) = tunnel_cmd(&st, "tunnel.start").await {
                     let _ = app2.emit("ui://error", json!(e.to_string()));
                     open_settings(&app2, "access");
                 }
@@ -195,7 +195,7 @@ pub fn on_event(app: &AppHandle, id: &str) {
             });
         }
         "copy_mcp" => {
-            if let Some(url) = st.gateway.status()["mcpUrl"].as_str() {
+            if let Some(url) = tunnel_status(&st)["mcpUrl"].as_str() {
                 copy_to_clipboard(url);
             }
         }
