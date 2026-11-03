@@ -39,6 +39,9 @@ pub const ASK_TOOLS: &[&str] = &["mux_ask_peer", "mux_get_reply"];
 /// Per bot: at most this many new questions to other agents per hour.
 const MAX_ASKS_PER_HOUR: usize = 30;
 const CF_TOKEN_SECRET: &str = "cloudflare-tunnel-token";
+/// The last permanent tunnel config that worked (JSON), and the host the user chose to give up.
+const LAST_GOOD: &str = "tunnel.last_good";
+const LOST_DISMISSED: &str = "tunnel.last_good_dismissed";
 const NGROK_TOKEN_SECRET: &str = "ngrok-authtoken";
 pub const PROVIDERS: &[&str] = &["cloudflared", "ngrok"];
 const DEFAULT_PORT: u16 = 4317;
@@ -112,7 +115,7 @@ pub struct Gateway {
 
 impl Gateway {
     pub fn new(core: Arc<Core>) -> Arc<Self> {
-        Arc::new(Self {
+        let g = Arc::new(Self {
             core,
             tokens: Mutex::new(HashMap::new()),
             tunnel: Mutex::new(TunnelState { phase: Phase::Stopped, url: None, error: None, last_log: None, kill: None, done: None, epoch: 0 }),
@@ -121,7 +124,9 @@ impl Gateway {
             limiter: Mutex::new(Limiter { window: Instant::now(), total: 0, bad: 0 }),
             asks: Mutex::new(HashMap::new()),
             paused: std::sync::atomic::AtomicBool::new(false),
-        })
+        });
+        g.remember_good();
+        g
     }
 
     // ───────── token ─────────
@@ -262,6 +267,89 @@ impl Gateway {
             return None;
         }
         if self.provider() == "ngrok" { self.ngrok_domain() } else { self.setting("tunnel.cf_hostname") }
+    }
+
+    // ───────── permanent-URL guard ─────────
+    //
+    // The permanent URL is what Grok's connector is configured with, so losing it silently is
+    // costly. The working config is kept aside (`tunnel.last_good`), a vanished permanent URL is
+    // reported instead of quietly replaced by a temporary one, and one call restores it.
+
+    /// Save the current permanent config as the last known good one.
+    pub fn remember_good(&self) {
+        let Some(host) = self.permanent_host() else { return };
+        let keys = ["tunnel.provider", "tunnel.cf_mode", "tunnel.cf_tunnel", "tunnel.cf_hostname", "tunnel.cf_zone", "tunnel.ngrok_domain"];
+        let mut snap = serde_json::Map::new();
+        for k in keys {
+            if let Some(v) = self.setting(k) {
+                snap.insert(k.to_string(), json!(v));
+            }
+        }
+        snap.insert("host".into(), json!(host));
+        let v = Value::Object(snap).to_string();
+        if self.setting(LAST_GOOD).as_deref() != Some(v.as_str()) {
+            let _ = self.core.vault.set_setting(LAST_GOOD, &v);
+        }
+        let _ = self.core.vault.del_setting(LOST_DISMISSED);
+    }
+
+    fn last_good(&self) -> Option<Value> {
+        self.setting(LAST_GOOD).and_then(|s| serde_json::from_str::<Value>(&s).ok())
+    }
+
+    /// The permanent host that was configured and has since disappeared, unless the user chose
+    /// to give it up (reset to temporary, switched provider, or dismissed the warning).
+    pub fn lost_permanent(&self) -> Option<String> {
+        if self.permanent() {
+            return None;
+        }
+        let host = self.last_good()?["host"].as_str()?.to_string();
+        (self.setting(LOST_DISMISSED).as_deref() != Some(host.as_str())).then_some(host)
+    }
+
+    /// The user decided the old permanent URL is gone for good: stop warning about it.
+    pub fn dismiss_lost(&self) -> Result<()> {
+        if let Some(h) = self.last_good().and_then(|g| g["host"].as_str().map(String::from)) {
+            self.core.vault.set_setting(LOST_DISMISSED, &h)?;
+        }
+        self.clear_error();
+        self.emit();
+        Ok(())
+    }
+
+    /// Put the last known good permanent config back. Returns its host.
+    pub fn restore_last_good(&self) -> Result<String> {
+        self.ensure_stopped()?;
+        let g = self.last_good().ok_or_else(|| anyhow!("there's no saved permanent tunnel to restore"))?;
+        let get = |k: &str| g[k].as_str().map(String::from);
+        let host = get("host").ok_or_else(|| anyhow!("the saved tunnel config is incomplete"))?;
+        match get("tunnel.cf_mode").as_deref() {
+            Some("named") => {
+                let id = get("tunnel.cf_tunnel").ok_or_else(|| anyhow!("the saved tunnel config has no tunnel id"))?;
+                let creds = Self::cf_cert().with_file_name(format!("{id}.json"));
+                if !creds.exists() {
+                    bail!("the Cloudflare credentials for tunnel {id} are missing ({}); set the domain up again", creds.display());
+                }
+            }
+            Some("token") if secrets::get(CF_TOKEN_SECRET).ok().flatten().is_none() => {
+                bail!("the Cloudflare tunnel token is no longer in the keychain; paste it again under Public access")
+            }
+            _ => {}
+        }
+        let v = &self.core.vault;
+        for k in ["tunnel.provider", "tunnel.cf_mode", "tunnel.cf_tunnel", "tunnel.cf_hostname", "tunnel.cf_zone", "tunnel.ngrok_domain"] {
+            if let Some(val) = get(k) {
+                v.set_setting(k, &val)?;
+            }
+        }
+        v.del_setting(LOST_DISMISSED)?;
+        self.clear_error();
+        self.emit();
+        if self.permanent_host().as_deref() != Some(host.as_str()) {
+            bail!("restored the settings, but {host} still isn't the permanent URL; set it up again");
+        }
+        tracing::info!("restored permanent tunnel {host}");
+        Ok(host)
     }
 
     pub fn autostart(&self) -> bool {
@@ -464,6 +552,7 @@ Delete that DNS record in the Cloudflare dashboard, then use a subdomain of {zon
                     let v: Value = r.json().await.unwrap_or(Value::Null);
                     if v["service"] == "agentmux" {
                         self.core.vault.set_setting("tunnel.verified_host", &host)?;
+                        self.remember_good();
                         self.emit();
                         return Ok(format!("Verified: {url}/mcp reaches this Mac from the internet"));
                     }
@@ -504,6 +593,10 @@ Delete that DNS record in the Cloudflare dashboard, then use a subdomain of {zon
         }
         let _ = secrets::delete(CF_TOKEN_SECRET);
         v.set_setting("tunnel.autostart", "0")?;
+        // Deliberate: don't warn that the permanent URL is gone (it can still be restored).
+        if let Some(h) = self.last_good().and_then(|g| g["host"].as_str().map(String::from)) {
+            v.set_setting(LOST_DISMISSED, &h)?;
+        }
         self.clear_error();
         self.emit();
         Ok(())
@@ -536,7 +629,13 @@ Delete that DNS record in the Cloudflare dashboard, then use a subdomain of {zon
         if !domain.is_empty() && valid_hostname(domain).is_err() {
             bail!("ngrok domain must be a bare hostname like my-app.ngrok-free.app");
         }
+        let switching = self.provider() != provider;
         self.core.vault.set_setting("tunnel.provider", provider)?;
+        if switching {
+            if let Some(h) = self.last_good().and_then(|g| g["host"].as_str().map(String::from)) {
+                self.core.vault.set_setting(LOST_DISMISSED, &h)?;
+            }
+        }
         if ngrok_domain.is_some() {
             if domain.is_empty() {
                 self.core.vault.del_setting("tunnel.ngrok_domain")?;
@@ -566,6 +665,7 @@ Delete that DNS record in the Cloudflare dashboard, then use a subdomain of {zon
             "cfLoggedIn": Self::cf_cert().exists(),
             "permanent": self.permanent(),
             // The permanent hostname has been reached through the internet at least once.
+            "lostPermanent": self.lost_permanent(),
             "verified": self.permanent_host().is_some_and(|h| self.setting("tunnel.verified_host").as_deref() == Some(h.as_str())),
             "autostart": self.autostart(),
             "installed": {
@@ -584,12 +684,22 @@ Delete that DNS record in the Cloudflare dashboard, then use a subdomain of {zon
     }
 
     fn emit(&self) {
+        let running = matches!(self.tunnel.lock().unwrap().phase, Phase::Running);
+        if running {
+            self.remember_good();
+        }
         self.core.emit("tunnel", self.status());
     }
 
     // ───────── tunnel ─────────
 
     pub async fn start(self: &Arc<Self>) -> Result<()> {
+        // Never quietly swap a cleared permanent URL for a temporary one.
+        if let Some(h) = self.lost_permanent() {
+            bail!(
+                "your permanent tunnel {h} was cleared from the settings. Restore it (Public access → Restore, or `agentmux tunnel restore`), or choose to use a temporary tunnel instead"
+            );
+        }
         let provider = self.provider();
         let (bin_name, hint) = if provider == "ngrok" { ("ngrok", "brew install ngrok") } else { ("cloudflared", "brew install cloudflared") };
         let Some(bin) = wakers::find_bin(bin_name) else {
@@ -598,6 +708,7 @@ Delete that DNS record in the Cloudflare dashboard, then use a subdomain of {zon
         if self.http.lock().unwrap().is_none() {
             bail!("the local HTTP endpoint is not running (is port {} already in use?)", port());
         }
+
         // Every bot gets its token before anything is exposed.
         let bots: Vec<String> = self.core.vault.providers()?.into_iter().filter(|p| p["family"] == "grok").filter_map(|p| p["id"].as_str().map(String::from)).collect();
         for b in bots {

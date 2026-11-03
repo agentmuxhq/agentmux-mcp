@@ -45,7 +45,14 @@ function CloudflareSetup({ gw, busy, run }: { gw: Gateway; busy: boolean; live: 
           <button className={`${btn} ml-auto`} disabled={gw.state !== "running"} onClick={test}>
             Test
           </button>
-          <button className={btn} disabled={busy || gw.state === "running"} title={gw.state === "running" ? "Stop the tunnel first" : undefined} onClick={() => run(api.cfReset)}>
+          <button className={btn} disabled={busy || gw.state === "running"} title={gw.state === "running" ? "Stop the tunnel first" : undefined} onClick={() => {
+              if (
+                window.confirm(
+                  `Switch back to a temporary tunnel?\n\n${gw.cfHostname} stops being used: every Grok connector set to it stops working until you restore it or paste a new URL. The tunnel stays in your Cloudflare account, and you can restore it later from this panel.`,
+                )
+              )
+                run(api.cfReset);
+            }}>
             Switch back to temporary
           </button>
         </div>
@@ -327,6 +334,39 @@ export default function TunnelPanel({ compact, agent = "grok" }: { compact?: boo
         {gw.remote && <span className="text-zinc-500">served by the AgentMux background service</span>}
         {!gw.http && !holder && <span className="text-amber-300">local endpoint not running yet (port {gw.port})</span>}
       </div>
+
+      {gw.lostPermanent && (
+        <div className="space-y-2 rounded-md border border-amber-400/30 bg-amber-500/10 p-2.5 text-[11.5px] text-amber-200">
+          <div>
+            <b>Your permanent tunnel was cleared.</b> <span className="font-mono">{gw.lostPermanent}</span> was set up and working, but its settings are gone, so
+            AgentMux won&apos;t quietly start a temporary URL in its place. Grok connectors pointing at it are offline until you restore it.
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              className={btnPrimary}
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                setErr(null);
+                try {
+                  const host = await api.tunnelRestore();
+                  setNote(`Restored ${host}. Start the tunnel to bring it back online.`);
+                  setGw(await api.gatewayStatus());
+                } catch (e) {
+                  setErr(String(e));
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              Restore {gw.lostPermanent}
+            </button>
+            <button className={btn} disabled={busy} onClick={() => run(api.tunnelKeepTemporary)}>
+              Use a temporary tunnel instead
+            </button>
+          </div>
+        </div>
+      )}
 
       {!gw.http && holder && (
         <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-400/30 bg-amber-500/10 p-2.5 text-[11.5px] text-amber-200">

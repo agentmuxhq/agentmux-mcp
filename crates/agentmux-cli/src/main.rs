@@ -42,7 +42,7 @@ enum Cmd {
     Stop,
     /// Show what's running: daemon, tunnel, agents, sync.
     Status,
-    /// Public access for cloud agents (Grok bots): status | start | stop | test.
+    /// Public access for cloud agents (Grok bots): status | start | stop | test | restore | keep-temporary.
     Tunnel {
         #[arg(default_value = "status")]
         action: String,
@@ -431,9 +431,15 @@ async fn tunnel(action: &str) -> Result<()> {
         "start" | "on" => "tunnel.start",
         "stop" | "off" => "tunnel.stop",
         "test" | "verify" => "tunnel.verify",
-        _ => bail!("use: agentmux tunnel status | start | stop | test"),
+        "restore" => "tunnel.restore",
+        "keep-temporary" => "tunnel.dismiss_lost",
+        _ => bail!("use: agentmux tunnel status | start | stop | test | restore | keep-temporary"),
     };
     let r = control(cmd).await?;
+    if cmd == "tunnel.restore" {
+        println!("✓ Restored the permanent tunnel {}. Start it with: agentmux tunnel start", r.as_str().unwrap_or(""));
+        return Ok(());
+    }
     if cmd == "tunnel.verify" {
         println!("✓ {}", r.as_str().unwrap_or("reachable"));
         return Ok(());
@@ -458,7 +464,10 @@ async fn tunnel(action: &str) -> Result<()> {
     if let Some(e) = t["error"].as_str() {
         println!("  error:    {e}");
     }
-    if t["permanent"] != true {
+    if let Some(h) = t["lostPermanent"].as_str() {
+        println!("  ⚠ your permanent tunnel {h} was cleared from the settings.");
+        println!("    Restore it: agentmux tunnel restore   (or use a temporary one: agentmux tunnel keep-temporary)");
+    } else if t["permanent"] != true {
         println!("  Set up a permanent URL in the AgentMux app: Settings → Public access.");
     }
     Ok(())

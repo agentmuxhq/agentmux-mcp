@@ -24,12 +24,23 @@ pub fn get(name: &str) -> Result<Option<String>> {
     }
 }
 
+/// When a secret comes from the environment (CI, tests), the keychain is left alone entirely.
+fn env_managed(name: &str) -> bool {
+    std::env::var_os(env_name(name)).is_some()
+}
+
 pub fn set(name: &str, value: &str) -> Result<()> {
+    if env_managed(name) {
+        return Ok(());
+    }
     let entry = keyring::Entry::new(SERVICE, name).map_err(|e| anyhow!("keychain unavailable: {e}"))?;
     entry.set_password(value).map_err(|e| anyhow!("keychain write failed: {e}"))
 }
 
 pub fn delete(name: &str) -> Result<()> {
+    if env_managed(name) {
+        return Ok(());
+    }
     let entry = keyring::Entry::new(SERVICE, name).map_err(|e| anyhow!("keychain unavailable: {e}"))?;
     match entry.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),

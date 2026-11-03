@@ -76,7 +76,7 @@ pub(crate) fn tunnel_status(st: &AppState) -> Value {
 pub(crate) async fn tunnel_cmd(st: &AppState, cmd: &str) -> Result<Value, String> {
     if external(st) {
         let r = daemon::control_request(cmd).await.map_err(err)?;
-        if cmd != "tunnel.verify" {
+        if cmd != "tunnel.verify" && cmd != "tunnel.restore" {
             *st.remote_tunnel.lock().unwrap() = Some(r.clone());
             st.core.emit("tunnel", tunnel_status(st));
         }
@@ -87,6 +87,8 @@ pub(crate) async fn tunnel_cmd(st: &AppState, cmd: &str) -> Result<Value, String
         "tunnel.start" => gw.start().await.map_err(err)?,
         "tunnel.stop" => gw.stop().await,
         "tunnel.verify" => return gw.verify().await.map(|m| json!(m)).map_err(err),
+        "tunnel.restore" => return gw.restore_last_good().map(|h| json!(h)).map_err(err),
+        "tunnel.dismiss_lost" => gw.dismiss_lost().map_err(err)?,
         _ => {}
     }
     Ok(gw.status())
@@ -429,6 +431,20 @@ async fn tunnel_cf_create(state: State<'_, AppState>, hostname: String) -> Resul
 #[tauri::command]
 async fn tunnel_cf_switch_domain(state: State<'_, AppState>) -> Result<Value, String> {
     state.gateway.cf_switch_domain().await.map_err(err)?;
+    Ok(tunnel_status(&state))
+}
+
+/// Put the last working permanent tunnel config back (after it was cleared). Returns its host.
+#[tauri::command]
+async fn tunnel_restore(state: State<'_, AppState>) -> Result<String, String> {
+    let r = tunnel_cmd(&state, "tunnel.restore").await?;
+    Ok(r.as_str().unwrap_or("").to_string())
+}
+
+/// Give up the cleared permanent URL and allow a temporary tunnel.
+#[tauri::command]
+async fn tunnel_keep_temporary(state: State<'_, AppState>) -> Result<Value, String> {
+    tunnel_cmd(&state, "tunnel.dismiss_lost").await?;
     Ok(tunnel_status(&state))
 }
 
@@ -833,6 +849,8 @@ pub fn run() {
             tunnel_cf_switch_domain,
             tunnel_verify,
             gateway_port_holder,
+            tunnel_restore,
+            tunnel_keep_temporary,
             gateway_take_over_port,
             tunnel_cf_token,
             tunnel_cf_reset,

@@ -12,7 +12,7 @@ Every command is `agentmux <command>`. Run `agentmux --help` or `agentmux <comma
 | `hook claude-code [--on\|--off]` | With no flag, this is what Claude Code runs on each prompt. `--on` / `--off` add or remove the hook |
 | `provider list` | All providers, built-in and custom |
 | `provider add <file.toml>` / `provider remove <id>` | Install or remove a [custom agent](./custom-agents.md) |
-| `tunnel status\|start\|stop\|test` | Public access for Grok bots |
+| `tunnel status\|start\|stop\|test\|restore\|keep-temporary` | Public access for Grok bots. `restore` brings back a permanent tunnel whose settings were cleared; `keep-temporary` gives it up |
 | `bot list\|add <name>\|remove <id>\|token <id> [--rotate]\|webhook <id> <url>\|ask <id> on\|off` | Manage Grok bots |
 | `sync status\|connect <remote>\|now\|off [--diffs] [--manual]` | Back up to your own private git repo |
 | `call <tool> '<json>' [--as <agent>]` | Call an MCP tool through the daemon (testing) |

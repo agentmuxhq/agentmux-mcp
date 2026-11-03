@@ -618,16 +618,55 @@ impl Vault {
     }
 
     pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
+        let old = self.audited(key).then(|| self.setting(key).ok().flatten()).flatten();
         self.conn.lock().unwrap().execute(
             "INSERT INTO settings(key, value) VALUES(?1, ?2) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             params![key, value],
         )?;
+        if self.audited(key) && old.as_deref() != Some(value) {
+            self.audit("set", key, old.as_deref(), Some(value));
+        }
         Ok(())
     }
 
     pub fn del_setting(&self, key: &str) -> Result<()> {
+        let old = self.audited(key).then(|| self.setting(key).ok().flatten()).flatten();
         self.conn.lock().unwrap().execute("DELETE FROM settings WHERE key = ?1", params![key])?;
+        if old.is_some() {
+            self.audit("delete", key, old.as_deref(), None);
+        }
         Ok(())
+    }
+
+    /// Tunnel settings decide the public URL agents are configured with, so every change to them
+    /// is recorded (none of them hold secrets; tokens live in the keychain).
+    fn audited(&self, key: &str) -> bool {
+        key.starts_with("tunnel.")
+    }
+
+    /// The change log, next to the vault: `<home>/logs/settings.log`.
+    pub fn settings_log(&self) -> PathBuf {
+        self.threads_dir.parent().unwrap_or(&self.threads_dir).join("logs").join("settings.log")
+    }
+
+    fn audit(&self, action: &str, key: &str, old: Option<&str>, new: Option<&str>) {
+        use std::io::Write;
+        let path = self.settings_log();
+        let _ = std::fs::create_dir_all(path.parent().unwrap());
+        let exe = std::env::current_exe().ok().and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string())).unwrap_or_default();
+        let line = format!(
+            "{} {action} {key} {:?} -> {:?} by {exe} (pid {})\n",
+            now(),
+            old.unwrap_or("-"),
+            new.unwrap_or("-"),
+            std::process::id()
+        );
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = f.write_all(line.as_bytes());
+        }
+        if action == "delete" {
+            tracing::info!("tunnel setting deleted: {key} (was {:?})", old.unwrap_or("-"));
+        }
     }
 
     // ---------- context ----------

@@ -201,7 +201,7 @@ pub async fn control_request(cmd: &str) -> Result<Value> {
     }
 }
 
-/// One request per connection: `{"cmd": "tunnel.status" | "tunnel.start" | "tunnel.stop" | "tunnel.verify" | "tokens.reload" | "ping"}`.
+/// One request per connection: `{"cmd": "tunnel.status" | "tunnel.start" | "tunnel.stop" | "tunnel.verify" | "tunnel.restore" | "tunnel.dismiss_lost" | "tokens.reload" | "ping"}`.
 /// Only reachable through the 0600 socket, i.e. by this macOS user.
 async fn control(
     gateway: Option<Arc<Gateway>>,
@@ -223,6 +223,14 @@ async fn control(
             g.stop().await;
             json!({"ok": true, "result": g.status()})
         }
+        ("tunnel.restore", Some(g)) => match g.restore_last_good() {
+            Ok(h) => json!({"ok": true, "result": h}),
+            Err(e) => json!({"ok": false, "error": e.to_string()}),
+        },
+        ("tunnel.dismiss_lost", Some(g)) => match g.dismiss_lost() {
+            Ok(()) => json!({"ok": true, "result": g.status()}),
+            Err(e) => json!({"ok": false, "error": e.to_string()}),
+        },
         // Another process rotated or removed a bot token in the Keychain: drop cached ones.
         ("tokens.reload", Some(g)) => {
             g.reload_tokens();

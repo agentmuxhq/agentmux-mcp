@@ -164,6 +164,8 @@ export type TunnelProvider = "cloudflared" | "ngrok";
 export interface Gateway {
   /** Served by another AgentMux process (the login service) that owns the port; this app relays to it. */
   remote?: boolean;
+  /** A permanent tunnel host that was configured and has since been cleared (null when fine). */
+  lostPermanent?: string | null;
   provider: TunnelProvider;
   ngrokDomain: string | null;
   ngrokAuthtoken: boolean;
@@ -241,6 +243,8 @@ export const api = {
   cfToken: (token: string, hostname: string) => call<Gateway>("tunnel_cf_token", { token, hostname }),
   cfSwitchDomain: () => call<Gateway>("tunnel_cf_switch_domain"),
   tunnelVerify: () => call<string>("tunnel_verify"),
+  tunnelRestore: () => call<string>("tunnel_restore"),
+  tunnelKeepTemporary: () => call<Gateway>("tunnel_keep_temporary"),
   portHolder: () => call<PortHolder | null>("gateway_port_holder"),
   takeOverPort: () => call<string>("gateway_take_over_port"),
   cfReset: () => call<Gateway>("tunnel_cf_reset"),

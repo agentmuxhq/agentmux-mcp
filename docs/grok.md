@@ -35,7 +35,9 @@ agentmux tunnel start
 agentmux bot token grok:job-hunter   # prints the MCP URL and the bot's token
 ```
 
-Paste the URL (`https://<host>/mcp`) and token into Grok as a custom MCP connector. Tunnels are off by default, stop when you quit from the menu bar, and can autostart if you choose.
+Paste the URL (`https://<host>/mcp`) and token into Grok as a custom MCP connector.
+
+**If a permanent tunnel's settings ever disappear,** AgentMux won't quietly start a temporary URL in its place, because that would leave Grok's connector pointing at nothing. It keeps the last working config, shows **Your permanent tunnel was cleared** in Public access and the menu bar, and **Restore** (or `agentmux tunnel restore`) puts it back. Every change to tunnel settings is logged with the process that made it in `~/.agentmux/logs/settings.log`. Tunnels are off by default, stop when you quit from the menu bar, and can autostart if you choose.
 
 ## What a bot's token allows
 

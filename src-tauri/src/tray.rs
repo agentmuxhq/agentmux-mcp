@@ -76,10 +76,16 @@ fn entries(app: &AppHandle) -> Vec<E> {
     if let Some(e) = gw["error"].as_str() {
         pa.push(info(format!("Error: {}", e.chars().take(60).collect::<String>())));
     }
+    let lost = gw["lostPermanent"].as_str().map(String::from);
+    if let Some(h) = &lost {
+        pa.push(info(format!("⚠ Permanent tunnel {h} was cleared")));
+        pa.push(item("tunnel_restore", format!("Restore {h}")));
+    }
     pa.push(E::Sep);
     pa.push(E::Item { id: "copy_mcp", text: "Copy MCP URL".into(), enabled: gw["mcpUrl"].is_string(), acc: None });
     pa.push(E::Item { id: "tunnel_toggle", text: if live { "Stop tunnel" } else { "Start tunnel" }.into(), enabled: on, acc: None });
     pa.push(item("settings_access", "Tunnel settings…"));
+    let label = if lost.is_some() { "needs attention" } else { label };
     v.push(E::Sub { text: format!("Public access · {label}"), items: pa });
 
     // Providers.
@@ -189,6 +195,16 @@ pub fn on_event(app: &AppHandle, id: &str) {
                     let _ = tunnel_cmd(&st, "tunnel.stop").await;
                 } else if let Err(e) = tunnel_cmd(&st, "tunnel.start").await {
                     let _ = app2.emit("ui://error", json!(e.to_string()));
+                    open_settings(&app2, "access");
+                }
+                refresh(&app2);
+            });
+        }
+        "tunnel_restore" => {
+            tauri::async_runtime::spawn(async move {
+                let st = app2.state::<AppState>();
+                if let Err(e) = tunnel_cmd(&st, "tunnel.restore").await {
+                    let _ = app2.emit("ui://error", json!(e));
                     open_settings(&app2, "access");
                 }
                 refresh(&app2);
