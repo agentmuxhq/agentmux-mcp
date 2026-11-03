@@ -668,8 +668,10 @@ pub fn run() {
                 });
             }
             let gw = gateway.clone();
-            // Retries, so the app picks the port up as soon as another AgentMux process frees it.
-            tauri::async_runtime::spawn(gw.serve_http_retrying());
+            // The HTTP port and the tunnel belong to whichever process owns the socket: serve only
+            // while this app is that process ("embedded"), and hand the port back when it isn't.
+            let st = status.clone();
+            tauri::async_runtime::spawn(gw.serve_http_while(move || st.lock().unwrap().as_str() == "embedded"));
             // A tunnel from before a restart keeps serving Grok's existing connector URL.
             let gw = gateway.clone();
             tauri::async_runtime::spawn(async move {

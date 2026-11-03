@@ -207,7 +207,8 @@ export default function TunnelPanel({ compact, agent = "grok" }: { compact?: boo
   }, [gw === null, bound]);
 
   const takeOver = async () => {
-    if (!holder || !window.confirm(`Stop the other AgentMux process (pid ${holder.pid})?\n${holder.path}`)) return;
+    if (!holder) return;
+    if (!holder.isSelf && !window.confirm(`Stop the other AgentMux process (pid ${holder.pid})?\n${holder.path}`)) return;
     setBusy(true);
     setErr(null);
     try {
@@ -330,9 +331,11 @@ export default function TunnelPanel({ compact, agent = "grok" }: { compact?: boo
       {!gw.http && holder && (
         <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-400/30 bg-amber-500/10 p-2.5 text-[11.5px] text-amber-200">
           <span className="min-w-0 flex-1">
-            {holder.agentmux ? (
+            {holder.isSelf ? (
+              <>Port {gw.port} is held by this app, but the AgentMux background service owns the tunnel, so it can&apos;t use the port.</>
+            ) : holder.agentmux ? (
               <>
-                Port {gw.port} is held by another AgentMux process (pid {holder.pid}), so this app can&apos;t serve the tunnel.
+                Port {gw.port} is held by another AgentMux process (pid {holder.pid}), so the tunnel can&apos;t start.
                 <span className="block break-all font-mono text-[10.5px] text-amber-200/70">{holder.path}</span>
               </>
             ) : (
@@ -341,9 +344,9 @@ export default function TunnelPanel({ compact, agent = "grok" }: { compact?: boo
               </>
             )}
           </span>
-          {holder.agentmux && (
+          {(holder.agentmux || holder.isSelf) && (
             <button className={btnPrimary} disabled={busy} onClick={takeOver}>
-              Stop it and use the port
+              {holder.isSelf ? "Let the background service use it" : "Stop it and use the port"}
             </button>
           )}
         </div>

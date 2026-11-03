@@ -136,6 +136,8 @@ export interface PortHolder {
   pid: number;
   path: string;
   agentmux: boolean;
+  /** This app itself holds the port (while the background service owns the socket and the tunnel). */
+  isSelf: boolean;
 }
 export interface Detect {
   agent: AgentId;

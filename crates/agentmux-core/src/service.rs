@@ -18,8 +18,11 @@ pub async fn run_headless(core: Arc<Core>) -> Result<()> {
     }
     let gw = Gateway::new(core.clone());
 
-    // HTTP gateway (Grok bots). The desktop app may hold the port; retry until it's free.
-    tokio::spawn(gw.clone().serve_http_retrying());
+    // HTTP gateway (Grok bots): served only while this process owns the socket, so the tunnel and
+    // the port always live in the same process (the desktop app takes both when it is the owner).
+    let owns = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let o = owns.clone();
+    tokio::spawn(gw.clone().serve_http_while(move || o.load(std::sync::atomic::Ordering::SeqCst)));
 
     // Tunnel: once the HTTP endpoint is up, take over a running tunnel or start the permanent one.
     let g = gw.clone();
@@ -81,7 +84,10 @@ pub async fn run_headless(core: Arc<Core>) -> Result<()> {
             gw.stop().await;
             return Ok(());
         }
-        match daemon::serve_with(core.clone(), Some(gw.clone()), rx.clone()).await {
+        owns.store(true, std::sync::atomic::Ordering::SeqCst);
+        let served = daemon::serve_with(core.clone(), Some(gw.clone()), rx.clone()).await;
+        owns.store(false, std::sync::atomic::Ordering::SeqCst);
+        match served {
             Ok(()) => {
                 gw.stop().await;
                 return Ok(());

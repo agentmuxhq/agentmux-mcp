@@ -103,6 +103,8 @@ pub struct Gateway {
     tokens: Mutex<HashMap<String, String>>,
     tunnel: Mutex<TunnelState>,
     http: Mutex<Option<String>>,
+    /// The task serving HTTP, so the port can be handed back to another AgentMux process.
+    http_task: Mutex<Option<tokio::task::AbortHandle>>,
     limiter: Mutex<Limiter>,
     asks: Mutex<HashMap<String, Vec<Instant>>>,
     paused: std::sync::atomic::AtomicBool,
@@ -115,6 +117,7 @@ impl Gateway {
             tokens: Mutex::new(HashMap::new()),
             tunnel: Mutex::new(TunnelState { phase: Phase::Stopped, url: None, error: None, last_log: None, kill: None, done: None, epoch: 0 }),
             http: Mutex::new(None),
+            http_task: Mutex::new(None),
             limiter: Mutex::new(Limiter { window: Instant::now(), total: 0, bad: 0 }),
             asks: Mutex::new(HashMap::new()),
             paused: std::sync::atomic::AtomicBool::new(false),
@@ -860,20 +863,50 @@ Delete that DNS record in the Cloudflare dashboard, then use a subdomain of {zon
 
     // ───────── HTTP ─────────
 
-    /// Keep trying to bind the HTTP port until it's free (another AgentMux process may hold it).
-    pub async fn serve_http_retrying(self: Arc<Self>) {
+    /// Give the HTTP port back (close the listener) so another AgentMux process can serve it.
+    pub fn release_http(&self) {
+        if let Some(h) = self.http_task.lock().unwrap().take() {
+            h.abort();
+        }
+        if self.http.lock().unwrap().take().is_some() {
+            tracing::info!("released the HTTP port");
+            self.emit();
+        }
+    }
+
+    /// Serve HTTP only while `owns()` says this process owns the AgentMux socket. The tunnel and the
+    /// HTTP port always belong to the socket's owner, so the app and the background service can
+    /// never end up with one each. Keeps retrying while the port is busy, and drops it as soon as
+    /// ownership is lost.
+    pub async fn serve_http_while(self: Arc<Self>, owns: impl Fn() -> bool + Send + Sync + 'static) {
         let mut warned = false;
         loop {
-            match self.clone().serve_http().await {
-                Ok(()) => break,
-                Err(e) => {
-                    if !warned {
-                        tracing::info!("HTTP gateway waiting: {e}");
-                        warned = true;
+            if owns() {
+                let g = self.clone();
+                let mut task = tokio::spawn(async move { g.serve_http().await });
+                *self.http_task.lock().unwrap() = Some(task.abort_handle());
+                loop {
+                    tokio::select! {
+                        r = &mut task => {
+                            if let Ok(Err(e)) = r {
+                                if !warned {
+                                    tracing::info!("HTTP gateway waiting: {e}");
+                                    warned = true;
+                                }
+                            }
+                            break;
+                        }
+                        _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                            if !owns() {
+                                self.release_http();
+                                let _ = (&mut task).await;
+                                break;
+                            }
+                        }
                     }
-                    tokio::time::sleep(Duration::from_secs(2)).await;
                 }
             }
+            tokio::time::sleep(Duration::from_secs(2)).await;
         }
     }
 
@@ -890,7 +923,9 @@ Delete that DNS record in the Cloudflare dashboard, then use a subdomain of {zon
             bail!("Port {} is used by {} (pid {}), which isn't AgentMux, so it was left alone. Quit that program, or start AgentMux with a different AGENTMUX_PORT.", port(), h.path, h.pid);
         }
         if h.pid == std::process::id() {
-            bail!("this process already holds the port");
+            // This app holds the port while another AgentMux process owns the socket: hand it over.
+            self.release_http();
+            return Ok("Released the port. The AgentMux background service will pick it up in a moment.".into());
         }
         let kill = |sig: &str| std::process::Command::new("kill").args([sig, &h.pid.to_string()]).status();
         kill("-TERM")?;
@@ -1093,10 +1128,13 @@ fn notable_error(provider: &str, line: &str) -> Option<String> {
 
 /// Who is listening on the gateway port, if anyone.
 #[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PortHolder {
     pub pid: u32,
     pub path: String,
     pub agentmux: bool,
+    /// This very process holds the port.
+    pub is_self: bool,
 }
 
 pub fn port_holder() -> Option<PortHolder> {
@@ -1108,5 +1146,5 @@ pub fn port_holder() -> Option<PortHolder> {
     let ps = std::process::Command::new("ps").args(["-o", "comm=", "-p", &pid.to_string()]).output().ok()?;
     let path = String::from_utf8_lossy(&ps.stdout).trim().to_string();
     let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    Some(PortHolder { pid, agentmux: matches!(name.as_str(), "agentmux" | "agentmux-app" | "agentmux-cli"), path })
+    Some(PortHolder { pid, is_self: pid == std::process::id(), agentmux: matches!(name.as_str(), "agentmux" | "agentmux-app" | "agentmux-cli"), path })
 }
