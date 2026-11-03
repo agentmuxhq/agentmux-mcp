@@ -126,6 +126,12 @@ impl Vault {
         Ok(())
     }
 
+    /// AgentMux was removed from the agent's config: it is no longer connected until its next handshake.
+    pub fn clear_connection(&self, id: &str) -> Result<()> {
+        self.conn.lock().unwrap().execute("UPDATE providers SET connected_at = NULL WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
     /// Mark a provider as having completed a real MCP handshake.
     pub fn mark_connected(&self, id: &str) -> Result<()> {
         let t = now();

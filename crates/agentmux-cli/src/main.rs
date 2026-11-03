@@ -151,7 +151,13 @@ async fn main() -> Result<()> {
         }
         Cmd::Hook { target, on, off } => hook::run(&target, on, off),
         Cmd::Provider { action, arg } => provider_cmd(&action, arg.as_deref()),
-        Cmd::Disconnect { agent } => each(&agent, connectors::uninstall),
+        Cmd::Disconnect { agent } => each(&agent, |id| {
+            let msg = connectors::uninstall(id)?;
+            if let Ok(v) = agentmux_core::Vault::open() {
+                let _ = v.clear_connection(id);
+            }
+            Ok(msg)
+        }),
         Cmd::Call { tool, args, as_agent } => call(&as_agent, &tool, &args).await,
         Cmd::Run { cmd } => run(cmd).await,
     }

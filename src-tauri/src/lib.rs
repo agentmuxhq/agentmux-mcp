@@ -147,8 +147,16 @@ async fn set_provider_option(id: String, name: String, on: bool) -> Result<Strin
 }
 
 #[tauri::command]
-async fn disconnect_provider(id: String) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || connectors::uninstall(&id).map_err(err)).await.map_err(err)?
+async fn disconnect_provider(state: State<'_, AppState>, id: String) -> Result<String, String> {
+    let core = state.core.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let msg = connectors::uninstall(&id).map_err(err)?;
+        let _ = core.vault.clear_connection(&id);
+        core.emit("provider_connected", json!({"id": id}));
+        Ok(msg)
+    })
+    .await
+    .map_err(err)?
 }
 
 #[tauri::command]

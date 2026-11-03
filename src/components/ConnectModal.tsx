@@ -97,12 +97,24 @@ export default function ConnectModal({ ov, initial = "cursor", startAdding, repl
     }
   };
 
+  /** A tile's real state: registered in the agent's config (from detection) and seen over MCP. */
+  const tileState = (id: string, seen: boolean): { label: string; on: boolean; pulse?: boolean } => {
+    // Remote providers (Grok) are set up in their own app, so only the handshake tells.
+    if (providerOf(id)?.remoteAccess) return seen ? { label: "connected", on: true } : { label: "not connected", on: false };
+    const dd = detect[id];
+    if (!dd) return { label: "checking…", on: false };
+    if (!dd.installed) return { label: "not found", on: false };
+    if (!dd.configured) return { label: "not registered", on: false };
+    return seen ? { label: "connected", on: true } : { label: "restart to connect", on: false, pulse: true };
+  };
+  const registered = manual || !!d?.configured;
+
   return (
     <Modal title="Connect a provider" onClose={onClose}>
       <div className="mb-5 grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-2">
         {catalog.map(({ id, name, multiInstance }) => {
           const group = ov.providers.filter((x) => (multiInstance ? providerOf(x.id)?.id === id : x.id === id));
-          const pr = { connectedAt: group.find((x) => x.connectedAt)?.connectedAt ?? null };
+          const st = tileState(id, group.some((x) => x.connectedAt));
           return (
             <button
               key={id}
@@ -114,8 +126,8 @@ export default function ConnectModal({ ov, initial = "cursor", startAdding, repl
               <Avatar id={id} size={32} />
               <span className="font-medium">{name}</span>
               <span className="flex items-center gap-1 text-[10px] text-zinc-500">
-                <Dot on={!!pr?.connectedAt} />
-                {pr?.connectedAt ? "connected" : "not connected"}
+                <Dot on={st.on} pulse={st.pulse} />
+                {st.label}
               </span>
             </button>
           );
@@ -145,7 +157,7 @@ export default function ConnectModal({ ov, initial = "cursor", startAdding, repl
           )}
           <button
             className={btn}
-            disabled={busy || !handshake}
+            disabled={busy || !handshake || !registered}
             title={handshake ? "Wake this agent and wait for its reply" : "Needs a completed handshake first"}
             onClick={async () => {
               setMsg(null);
@@ -374,8 +386,12 @@ export default function ConnectModal({ ov, initial = "cursor", startAdding, repl
         )}
 
         <div className="flex items-center gap-2 rounded-lg border border-white/10 p-3 text-xs">
-          <Dot on={handshake} pulse={!handshake} />
-          {handshake ? (
+          <Dot on={registered && handshake} pulse={registered && !handshake} />
+          {d && !registered ? (
+            <span className="text-zinc-400">
+              {d.installed ? <>AgentMux isn&apos;t registered in {meta.name}. Click <b>Connect</b> to add it.</> : <>{meta.name} wasn&apos;t found on this Mac.</>}
+            </span>
+          ) : handshake ? (
             <span className="text-emerald-300">
               Handshake received · last seen {ago(p?.lastSeen)} · {p?.calls} calls
             </span>
