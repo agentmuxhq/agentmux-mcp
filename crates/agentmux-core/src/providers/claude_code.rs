@@ -92,7 +92,7 @@ pub fn hook_enabled() -> bool {
 
 impl Provider for ClaudeCode {
     fn info(&self) -> ProviderInfo {
-        ProviderInfo { id: "claude".into(), name: "Claude Code".into(), color: "#10B981".into(), hint: "MCP stdio · claude mcp add".into() }
+        ProviderInfo { id: "claude".into(), name: "Claude Code".into(), color: "#D97757".into(), hint: "MCP stdio · claude mcp add".into() }
     }
     fn caps(&self) -> Capabilities {
         Capabilities { multi_instance: false, remote_access: false, wake: "cli", context_hook: true }

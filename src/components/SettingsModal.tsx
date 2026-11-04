@@ -167,6 +167,11 @@ export default function SettingsModal({ ov, onClose, initial = "daemon" }: { ov:
           <Row k="HTTP gateway" v="127.0.0.1:4317/mcp (bearer token; only reachable from outside through a tunnel you start)" />
           <Row k="Wake safety" v="read-only by default; per-room toggle allows edits; hop limit 3; 5 min timeout" />
           <UpdateSettings />
+          <div className="mt-5 border-t border-white/5 pt-3 text-[11px] leading-relaxed text-zinc-600">
+            Cursor, ChatGPT and OpenAI, Grok and xAI, Gemini and Google, Claude and Anthropic are trademarks of their respective owners. Their logos are shown
+            only to identify each provider (marks via LobeHub Icons, MIT); Claude Code is shown in Anthropic&apos;s colour without its logo. AgentMux is an
+            independent open-source project and is not affiliated with or endorsed by any of them.
+          </div>
         </div>
       )}
       {sec === "access" && <TunnelPanel />}

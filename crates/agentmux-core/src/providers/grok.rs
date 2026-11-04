@@ -7,7 +7,7 @@ pub struct Grok;
 
 impl Provider for Grok {
     fn info(&self) -> ProviderInfo {
-        ProviderInfo { id: "grok".into(), name: "Grok Bot".into(), color: "#D97736".into(), hint: "MCP stdio · added in Grok Bot settings".into() }
+        ProviderInfo { id: "grok".into(), name: "Grok Bot".into(), color: "#000000".into(), hint: "MCP stdio · added in Grok Bot settings".into() }
     }
     fn caps(&self) -> Capabilities {
         Capabilities { multi_instance: true, remote_access: true, wake: "webhook", context_hook: false }

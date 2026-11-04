@@ -1,18 +1,26 @@
 import type { ReactNode } from "react";
 import { X } from "lucide-react";
-import { agentMeta } from "../lib/api";
+import { agentMeta, providerOf } from "../lib/api";
+import { markFor } from "../lib/marks";
 
 export function Avatar({ id, size = 28 }: { id: string; size?: number }) {
   const meta = id === "user" || id === "agentmux" ? null : agentMeta(id);
   const color = meta?.color ?? "#6B7280";
   const label = id === "user" ? "You" : meta ? meta.name[0]?.toUpperCase() : id === "agentmux" ? "A" : id[0]?.toUpperCase();
+  // The provider's mark where we show one (see lib/marks.ts); Claude Code and custom agents get a letter.
+  const mark = meta ? markFor(providerOf(id)?.id) : undefined;
+  const dark = /^#(0|1)[0-9a-f]/i.test(color);
   return (
     <div
-      className="flex shrink-0 items-center justify-center rounded-full font-display font-semibold text-white"
+      className={`flex shrink-0 items-center justify-center rounded-full font-display font-semibold text-white ${dark ? "ring-1 ring-white/20" : ""}`}
       style={{ width: size, height: size, background: color, fontSize: size * 0.4 }}
       title={meta?.name ?? id}
     >
-      {label}
+      {mark ? (
+        <svg viewBox="0 0 24 24" fill="currentColor" fillRule="evenodd" width={size * 0.58} height={size * 0.58} aria-hidden dangerouslySetInnerHTML={{ __html: mark }} />
+      ) : (
+        label
+      )}
     </div>
   );
 }

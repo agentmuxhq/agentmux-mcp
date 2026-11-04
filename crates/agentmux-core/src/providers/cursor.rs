@@ -13,7 +13,7 @@ fn binary() -> Option<PathBuf> {
 
 impl Provider for Cursor {
     fn info(&self) -> ProviderInfo {
-        ProviderInfo { id: "cursor".into(), name: "Cursor".into(), color: "#3B82F6".into(), hint: "MCP stdio · ~/.cursor/mcp.json".into() }
+        ProviderInfo { id: "cursor".into(), name: "Cursor".into(), color: "#1C1C1C".into(), hint: "MCP stdio · ~/.cursor/mcp.json".into() }
     }
     fn caps(&self) -> Capabilities {
         Capabilities { multi_instance: false, remote_access: false, wake: "cli", context_hook: false }

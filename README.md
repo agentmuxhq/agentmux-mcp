@@ -173,4 +173,4 @@ Everything lives in `~/.agentmux` on your Mac. Secrets live in the macOS Keychai
 
 [Apache-2.0](LICENSE).
 
-Cursor, Claude, Claude Code, ChatGPT, OpenAI, Grok and xAI are trademarks of their respective owners. AgentMux is not affiliated with or endorsed by them.
+Cursor, Claude, Claude Code, Anthropic, ChatGPT, OpenAI, Grok, xAI, Gemini and Google are trademarks of their respective owners. The app shows some providers' logos only to identify them (marks via [LobeHub Icons](https://github.com/lobehub/lobe-icons), MIT); Claude Code is shown in Anthropic's colour without its logo. AgentMux is not affiliated with or endorsed by them.

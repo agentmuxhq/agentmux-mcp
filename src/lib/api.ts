@@ -18,11 +18,11 @@ export interface CatalogEntry {
 
 /** Shown before the first overview arrives; the backend catalog replaces it. */
 const FALLBACK: CatalogEntry[] = [
-  { id: "cursor", name: "Cursor", color: "#3B82F6", hint: "MCP stdio · ~/.cursor/mcp.json", multiInstance: false, remoteAccess: false, wake: "cli", contextHook: false },
-  { id: "grok", name: "Grok Bot", color: "#D97736", hint: "MCP stdio · added in Grok Bot settings", multiInstance: true, remoteAccess: true, wake: "webhook", contextHook: false },
-  { id: "claude", name: "Claude Code", color: "#10B981", hint: "MCP stdio · claude mcp add", multiInstance: false, remoteAccess: false, wake: "cli", contextHook: true },
-  { id: "chatgpt", name: "ChatGPT", color: "#8B5CF6", hint: "MCP stdio · ~/.codex/config.toml", multiInstance: false, remoteAccess: false, wake: "cli", contextHook: false },
-  { id: "gemini", name: "Gemini CLI", color: "#4285F4", hint: "MCP stdio · ~/.gemini/settings.json", multiInstance: false, remoteAccess: false, wake: "cli", contextHook: false },
+  { id: "cursor", name: "Cursor", color: "#1C1C1C", hint: "MCP stdio · ~/.cursor/mcp.json", multiInstance: false, remoteAccess: false, wake: "cli", contextHook: false },
+  { id: "grok", name: "Grok Bot", color: "#000000", hint: "MCP stdio · added in Grok Bot settings", multiInstance: true, remoteAccess: true, wake: "webhook", contextHook: false },
+  { id: "claude", name: "Claude Code", color: "#D97757", hint: "MCP stdio · claude mcp add", multiInstance: false, remoteAccess: false, wake: "cli", contextHook: true },
+  { id: "chatgpt", name: "ChatGPT", color: "#10A37F", hint: "MCP stdio · ~/.codex/config.toml", multiInstance: false, remoteAccess: false, wake: "cli", contextHook: false },
+  { id: "gemini", name: "Gemini CLI", color: "#1A73E8", hint: "MCP stdio · ~/.gemini/settings.json", multiInstance: false, remoteAccess: false, wake: "cli", contextHook: false },
 ];
 
 let known: Provider[] = [];

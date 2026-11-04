@@ -24,7 +24,7 @@ fn run(args: &[&str]) -> Result<String> {
 
 impl Provider for Codex {
     fn info(&self) -> ProviderInfo {
-        ProviderInfo { id: "chatgpt".into(), name: "ChatGPT".into(), color: "#8B5CF6".into(), hint: "MCP stdio · ~/.codex/config.toml".into() }
+        ProviderInfo { id: "chatgpt".into(), name: "ChatGPT".into(), color: "#10A37F".into(), hint: "MCP stdio · ~/.codex/config.toml".into() }
     }
     fn caps(&self) -> Capabilities {
         Capabilities { multi_instance: false, remote_access: false, wake: "cli", context_hook: false }

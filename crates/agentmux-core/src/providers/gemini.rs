@@ -15,7 +15,7 @@ fn settings_path() -> PathBuf {
 
 impl Provider for Gemini {
     fn info(&self) -> ProviderInfo {
-        ProviderInfo { id: "gemini".into(), name: "Gemini CLI".into(), color: "#4285F4".into(), hint: "MCP stdio · ~/.gemini/settings.json".into() }
+        ProviderInfo { id: "gemini".into(), name: "Gemini CLI".into(), color: "#1A73E8".into(), hint: "MCP stdio · ~/.gemini/settings.json".into() }
     }
     fn caps(&self) -> Capabilities {
         Capabilities { multi_instance: false, remote_access: false, wake: "cli", context_hook: false }
