@@ -55,6 +55,9 @@ pub fn find_bin(name: &str) -> Option<PathBuf> {
 const ENV_ALLOW: &[&str] = &[
     "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "TMPDIR", "TERM", "CURSOR_API_KEY", "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY", "CODEX_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
+    // Gemini CLI signs in with an API key, Vertex AI or a Google login; keep whichever is set up.
+    "GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION", "GOOGLE_GENAI_USE_VERTEXAI",
+    "GOOGLE_APPLICATION_CREDENTIALS", "CLOUDSDK_CONFIG",
 ];
 
 /// Run the agent's CLI headlessly and return its final stdout as the reply.
@@ -95,9 +98,30 @@ pub async fn run_wake(
     let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
     let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
     if !out.status.success() || stdout.is_empty() {
-        let detail = if !stdout.is_empty() { stdout } else { stderr };
+        let detail = strip_ansi(if !stdout.is_empty() { &stdout } else { &stderr });
         let tail: String = detail.chars().rev().take(500).collect::<Vec<_>>().into_iter().rev().collect();
         return Err(anyhow!("@{agent} wake failed ({}): {}", out.status, tail));
     }
     Ok(stdout)
+}
+
+/// Terminal colour codes (ESC [ … letter) out of a CLI's output, so errors read cleanly in the app.
+pub fn strip_ansi(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                for n in chars.by_ref() {
+                    if n.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
 }

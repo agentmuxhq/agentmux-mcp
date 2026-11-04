@@ -51,8 +51,8 @@ fn registry_and_golden_wake_args() {
     assert_eq!(args("claude", true).unwrap(), ["-p", "P", "--permission-mode", "acceptEdits"]);
     assert_eq!(args("chatgpt", false).unwrap(), ["exec", "-s", "read-only", "--skip-git-repo-check", "--ephemeral", "-C", "/ws", "P"]);
     assert_eq!(args("chatgpt", true).unwrap()[2], "workspace-write");
-    assert_eq!(args("gemini", false).unwrap(), ["-p", "P", "--approval-mode", "plan", "--output-format", "text"]);
-    assert_eq!(args("gemini", true).unwrap()[3], "auto_edit");
+    assert_eq!(args("gemini", false).unwrap(), ["-p", "P", "--skip-trust", "--approval-mode", "plan", "--output-format", "text"]);
+    assert_eq!(args("gemini", true).unwrap()[4], "auto_edit");
     assert!(args("grok", false).is_none(), "Grok is woken by webhook, not a CLI");
 }
 
@@ -144,4 +144,9 @@ fn gemini_registers_in_its_settings_without_touching_the_rest() {
     p.uninstall().unwrap();
     assert!(!p.configured());
     assert!(v["mcpServers"]["pencil"].is_object());
+}
+
+#[test]
+fn cli_errors_lose_their_colour_codes() {
+    assert_eq!(agentmux_core::wakers::strip_ansi("\u{1b}[31mGemini CLI is not running\u{1b}[0m here"), "Gemini CLI is not running here");
 }

@@ -44,7 +44,9 @@ impl Provider for Gemini {
         let s = |x: &str| x.to_string();
         Some(WakeSpec {
             bin: find_bin("gemini")?,
-            args: vec![s("-p"), s(r.prompt), s("--approval-mode"), s(if r.allow_edits { "auto_edit" } else { "plan" }), s("--output-format"), s("text")],
+            // --skip-trust: headless runs refuse untrusted folders, and an untrusted folder would also
+            // silently turn plan (read-only) mode back into default. It trusts the folder for this run only.
+            args: vec![s("-p"), s(r.prompt), s("--skip-trust"), s("--approval-mode"), s(if r.allow_edits { "auto_edit" } else { "plan" }), s("--output-format"), s("text")],
         })
     }
 }
