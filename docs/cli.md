@@ -10,6 +10,10 @@ Every command is `agentmux <command>`. Run `agentmux --help` or `agentmux <comma
 | `connect <agent\|all> [--no-hook]` | Register AgentMux as an MCP server in an agent. `--no-hook` skips Claude Code's context hook |
 | `disconnect <agent\|all>` | Remove it again (and Claude Code's hook) |
 | `hook claude-code [--on\|--off]` | With no flag, this is what Claude Code runs on each prompt. `--on` / `--off` add or remove the hook |
+| `search <words…>` | Search memory across every product |
+| `brief <question…>` | The contextual summary of the thread that matches |
+| `engine status\|set <role> <kind> [url] [model]\|test <role>` | Optional engines: writer, embed, decide, guard ([Engines](./engines.md)) |
+| `router stats` | How often routing had to ask you, and whether a decision model would help |
 | `provider list` | All providers, built-in and custom |
 | `provider add <file.toml>` / `provider remove <id>` | Install or remove a [custom agent](./custom-agents.md) |
 | `tunnel status\|start\|stop\|test\|restore\|keep-temporary` | Public access for Grok bots. `restore` brings back a permanent tunnel whose settings were cleared; `keep-temporary` gives it up |

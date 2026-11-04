@@ -23,6 +23,8 @@ pub async fn run_headless(core: Arc<Core>) -> Result<()> {
     let owns = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let o = owns.clone();
     tokio::spawn(gw.clone().serve_http_while(move || o.load(std::sync::atomic::Ordering::SeqCst)));
+    let o = owns.clone();
+    tokio::spawn(core.clone().memory_worker(move || o.load(std::sync::atomic::Ordering::SeqCst)));
 
     // Tunnel: once the HTTP endpoint is up, take over a running tunnel or start the permanent one.
     let g = gw.clone();

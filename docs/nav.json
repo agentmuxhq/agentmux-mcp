@@ -11,6 +11,14 @@
         "How AgentMux works"
       ],
       [
+        "memory",
+        "Memory and routing"
+      ],
+      [
+        "engines",
+        "Engines (optional)"
+      ],
+      [
         "cli",
         "CLI reference"
       ]

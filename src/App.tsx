@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { FileText, FolderGit2, GitBranch, Plus, RefreshCw, Search, Send, Settings, Terminal } from "lucide-react";
+import { Brain, FileText, FolderGit2, GitBranch, Plus, RefreshCw, Search, Send, Settings, Terminal } from "lucide-react";
 import {
   agentMeta,
   ago,
@@ -16,6 +16,7 @@ import {
   type MuxEvent,
   type Overview,
   type Room,
+  type ThreadHit,
 } from "./lib/api";
 import { Avatar, Badge, Dot, btn, btnPrimary } from "./components/ui";
 import ConnectModal from "./components/ConnectModal";
@@ -23,11 +24,12 @@ import NewRoomModal from "./components/NewRoomModal";
 import Starter from "./components/Starter";
 import Markdown from "./components/Markdown";
 import EditableTitle from "./components/EditableTitle";
+import { AttachButton, AttachmentList, PendingChips, type PendingFile } from "./components/Attachments";
 import { UpdateRow } from "./components/UpdateControls";
 import PublicAccessCard from "./components/PublicAccessCard";
 import SettingsModal from "./components/SettingsModal";
 
-type RightTab = "details" | "context" | "status";
+type RightTab = "details" | "memory" | "context" | "status";
 type Reply = { status: string; text: string };
 
 /** Room members first, then everyone else. */
@@ -50,6 +52,8 @@ function AgentOptions({ ov, members, exclude }: { ov: Overview; members: string[
 
 function MessageRow({ m }: { m: Message }) {
   const system = m.sender === "agentmux";
+  // AgentMux's own lines are either a failed answer or a notice (rename, merge, guard).
+  const failed = system && /could not answer|has not answered|wake failed/.test(m.text);
   const name = m.sender === "user" ? "You" : system ? m.sender : agentMeta(m.sender).name;
   return (
     <div className="flex gap-3 px-6 py-3">
@@ -61,13 +65,14 @@ function MessageRow({ m }: { m: Message }) {
           <span className="text-zinc-600">{clock(m.createdAt)}</span>
           {m.type === "a2a_request" && <Badge>ask</Badge>}
           {m.type === "a2a_reply" && <Badge tone="green">reply</Badge>}
-          {system && <Badge tone="red">error</Badge>}
+          {system && (failed ? <Badge tone="red">error</Badge> : <Badge tone="amber">notice</Badge>)}
         </div>
         {system ? (
-          <div className="mt-1 select-text whitespace-pre-wrap break-words text-[13px] leading-relaxed text-red-300">{m.text}</div>
+          <div className={`mt-1 select-text whitespace-pre-wrap break-words text-[13px] leading-relaxed ${failed ? "text-red-300" : "text-amber-200/90"}`}>{m.text}</div>
         ) : (
           <Markdown text={m.text} className="mt-1 text-[13px] leading-relaxed text-zinc-200" />
         )}
+        {m.attachments && m.attachments.length > 0 && <AttachmentList items={m.attachments} />}
         {m.codeBlock && <pre className="mt-2 select-text overflow-x-auto rounded-md border border-white/10 bg-black/40 p-3 font-mono text-[11px] text-zinc-300">{m.codeBlock}</pre>}
       </div>
     </div>
@@ -121,7 +126,9 @@ export default function App() {
   const [showNewRoom, setShowNewRoom] = useState(false);
   const [connectInit, setConnectInit] = useState<{ agent?: string; addBot?: boolean }>({});
   const [query, setQuery] = useState("");
-  const [hits, setHits] = useState<{ roomId: string; sender: string; text: string; createdAt: string }[] | null>(null);
+  const [hits, setHits] = useState<ThreadHit[] | null>(null);
+  const [files, setFiles] = useState<PendingFile[]>([]);
+  const [memo, setMemo] = useState<{ summary?: string; engine?: string; brief?: string; busy?: string }>({});
   const [notes, setNotes] = useState("");
 
   const roomRef = useRef<string | null>(null);
@@ -226,14 +233,29 @@ export default function App() {
   useEffect(() => {
     setNotes(room?.context.notes ?? "");
   }, [roomId, room?.context.notes]);
+  // The Memory tab shows the current thread's summary and the product's brief.
+  useEffect(() => {
+    if (rightTab !== "memory" || !roomId) return;
+    setMemo({});
+    if (sessionId) api.threadSummary(sessionId, false).then((r) => setMemo((m) => ({ ...m, summary: r.summary, engine: r.engine }))).catch(() => {});
+    api.roomBrief(roomId, false).then((b) => setMemo((m) => ({ ...m, brief: b }))).catch(() => {});
+  }, [rightTab, roomId, sessionId]);
 
   const send = async () => {
     if (!room || !text.trim() || sending) return;
     setSending(true);
     setError(null);
     try {
-      await api.send(room.id, sessionId, to, text.trim(), then);
+      if (to === "__all__") {
+        if (!sessionId) throw new Error("Pick a thread first");
+        const res = await api.askAll(room.id, sessionId, text.trim(), files);
+        const failed = res.filter((r) => r.error);
+        if (failed.length) setError(failed.map((r) => `@${r.to}: ${r.error}`).join("\n"));
+      } else {
+        await api.send(room.id, sessionId, to, text.trim(), then, files);
+      }
       setText("");
+      setFiles([]);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -245,7 +267,7 @@ export default function App() {
   const doSearch = async () => {
     if (!query.trim()) return setHits(null);
     try {
-      setHits(await api.search(query.trim()));
+      setHits(await api.memorySearch(query.trim()));
     } catch (e) {
       setError(String(e));
     }
@@ -438,12 +460,24 @@ export default function App() {
           {hits ? (
             <div className="p-6">
               <div className="mb-3 text-xs text-zinc-500">{hits.length} results for “{query}”</div>
-              {hits.map((h, i) => (
-                <button key={i} onClick={() => (setRoomId(h.roomId), setHits(null))} className="mb-2 block w-full rounded-md border border-white/10 p-3 text-left hover:bg-white/5">
-                  <div className="text-[11px] text-zinc-500">
-                    {h.roomId} · {h.sender} · {ago(h.createdAt)}
+              {hits.map((h) => (
+                <button
+                  key={h.session}
+                  onClick={() => (setRoomId(h.room), setSessionId(h.session), setHits(null))}
+                  className="mb-2 block w-full rounded-md border border-white/10 p-3 text-left hover:bg-white/5"
+                >
+                  <div className="flex items-center gap-2 text-[12px]">
+                    <span className="font-medium text-zinc-200">{h.roomName}</span>
+                    <span className="text-zinc-600">›</span>
+                    <span className="text-zinc-300">{h.thread}</span>
+                    <span className="ml-auto text-[10px] text-zinc-600">{h.matched.join(" · ")}{h.lastActivity ? ` · ${ago(h.lastActivity)}` : ""}</span>
                   </div>
-                  <div className="mt-1 line-clamp-3 text-xs">{h.text}</div>
+                  {h.currentState && <div className="mt-1 text-[11px] text-emerald-300/80">Now: {h.currentState}</div>}
+                  {h.snippets.slice(0, 2).map((sn) => (
+                    <div key={sn.message} className="mt-1 line-clamp-2 text-xs text-zinc-400">
+                      <span className="text-zinc-500">{agentMeta(sn.from).name}:</span> {sn.text}
+                    </div>
+                  ))}
                 </button>
               ))}
             </div>
@@ -495,26 +529,33 @@ export default function App() {
         {room && (
           <div className="border-t border-white/10 p-4">
             <div className="rounded-xl border border-white/10 bg-[#161616] p-3">
+              <PendingChips files={files} onRemove={(i) => setFiles((f) => f.filter((_, j) => j !== i))} />
               <textarea
                 value={text}
                 onChange={(e) => setText(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send();
                 }}
-                placeholder={`Ask @${to} something about ${room.title}…  (⌘↵ to send)`}
+                placeholder={to === "__all__" ? `Message everyone in this thread…  (⌘↵ to send)` : `Ask @${to} something about ${room.title}…  (⌘↵ to send)`}
                 rows={2}
                 className="w-full resize-none select-text bg-transparent text-[13px] outline-none placeholder:text-zinc-600"
               />
               <div className="mt-2 flex items-center gap-2 text-xs">
                 <span className="text-zinc-500">To</span>
                 <select value={to} onChange={(e) => setTo(e.target.value)} className="rounded-md border border-white/10 bg-black/40 px-2 py-1">
+                  {sessionId && <option value="__all__">Everyone in this thread</option>}
                   <AgentOptions ov={ov} members={room.participants} />
                 </select>
-                <span className="text-zinc-500">then →</span>
-                <select value={then} onChange={(e) => setThen(e.target.value)} className="rounded-md border border-white/10 bg-black/40 px-2 py-1">
-                  <option value="none">nobody</option>
-                  <AgentOptions ov={ov} members={room.participants} exclude={to} />
-                </select>
+                {to !== "__all__" && (
+                  <>
+                    <span className="text-zinc-500">then →</span>
+                    <select value={then} onChange={(e) => setThen(e.target.value)} className="rounded-md border border-white/10 bg-black/40 px-2 py-1">
+                      <option value="none">nobody</option>
+                      <AgentOptions ov={ov} members={room.participants} exclude={to} />
+                    </select>
+                  </>
+                )}
+                <AttachButton onPick={(f) => setFiles((cur) => [...cur, ...f])} />
                 <button className={`${btnPrimary} ml-auto`} disabled={!text.trim() || sending} onClick={send}>
                   <Send size={12} /> Send
                 </button>
@@ -527,9 +568,9 @@ export default function App() {
       {/* ───────── Right: inspector ───────── */}
       <aside className="flex w-80 shrink-0 flex-col border-l border-white/10 bg-[#121212]">
         <div data-tauri-drag-region className="flex h-12 shrink-0 items-end gap-1 border-b border-white/10 px-3 pb-2">
-          {(["details", "context", "status"] as RightTab[]).map((t) => (
+          {(["details", "memory", "context", "status"] as RightTab[]).map((t) => (
             <button key={t} onClick={() => setRightTab(t)} className={`rounded-md px-3 py-1 text-xs capitalize ${rightTab === t ? "bg-white/10" : "text-zinc-500 hover:bg-white/5"}`}>
-              {t === "context" ? "Shared context" : t}
+              {t === "context" ? "Shared context" : t === "memory" ? "Memory" : t}
             </button>
           ))}
         </div>
@@ -573,6 +614,66 @@ export default function App() {
                       {s.title}
                     </button>
                   ))}
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-zinc-600">Select a room.</div>
+            ))}
+
+          {rightTab === "memory" &&
+            (room ? (
+              <div className="space-y-5 text-xs">
+                <div>
+                  <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                    <Brain size={12} /> This thread
+                    <button
+                      className="ml-auto rounded px-1.5 py-0.5 normal-case text-zinc-400 hover:bg-white/10"
+                      disabled={!sessionId || memo.busy === "summary"}
+                      onClick={async () => {
+                        if (!sessionId) return;
+                        setMemo((m) => ({ ...m, busy: "summary" }));
+                        try {
+                          const r = await api.threadSummary(sessionId, true);
+                          setMemo((m) => ({ ...m, summary: r.summary, engine: r.engine, busy: undefined }));
+                        } catch (e) {
+                          setError(String(e));
+                          setMemo((m) => ({ ...m, busy: undefined }));
+                        }
+                      }}
+                    >
+                      {memo.busy === "summary" ? "Updating…" : memo.summary ? "Update" : "Summarize"}
+                    </button>
+                  </div>
+                  {memo.summary ? (
+                    <>
+                      <Markdown text={memo.summary} className="text-[12px] leading-relaxed text-zinc-300" />
+                      {memo.engine && <div className="mt-1 text-[10px] text-zinc-600">by {memo.engine === "outline" ? "AgentMux (outline; turn on a writer in Settings → Engines)" : memo.engine}</div>}
+                    </>
+                  ) : (
+                    <div className="text-zinc-600">The contextual summary of this thread: goal, decisions and why, where it stands, open items. Kept up to date in the background.</div>
+                  )}
+                </div>
+                <div>
+                  <div className="mb-2 flex items-center text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                    Product brief
+                    <button
+                      className="ml-auto rounded px-1.5 py-0.5 normal-case text-zinc-400 hover:bg-white/10"
+                      disabled={memo.busy === "brief"}
+                      onClick={async () => {
+                        setMemo((m) => ({ ...m, busy: "brief" }));
+                        try {
+                          const b = await api.roomBrief(room.id, true);
+                          setMemo((m) => ({ ...m, brief: b, busy: undefined }));
+                        } catch (e) {
+                          setError(String(e));
+                          setMemo((m) => ({ ...m, busy: undefined }));
+                        }
+                      }}
+                    >
+                      {memo.busy === "brief" ? "Updating…" : "Update"}
+                    </button>
+                  </div>
+                  {memo.brief ? <Markdown text={memo.brief} className="text-[12px] leading-relaxed text-zinc-300" /> : <div className="text-zinc-600">Loading…</div>}
                 </div>
               </div>
             ) : (

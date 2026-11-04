@@ -43,7 +43,7 @@ Paste the URL (`https://<host>/mcp`) and token into Grok as a custom MCP connect
 
 Remote callers never get the full tool set. A token is checked in constant time, bound to one bot, and the request's `Host` must match the active tunnel. It unlocks:
 
-| Always | `mux_whoami`, `mux_contacts`, `mux_register`, `mux_inbox`, `mux_reply`, `mux_updates`, `mux_sessions` (its own room only) |
+| Always | `mux_whoami`, `mux_contacts`, `mux_register`, `mux_inbox`, `mux_reply`, `mux_updates`, `mux_sessions` (its own room only), `mux_search` / `mux_brief` (threads it took part in only) |
 |---|---|
 | **With "start conversations"** (on by default) | `mux_ask_peer`, `mux_get_reply` |
 | Never | `mux_read_context`, `mux_publish_context`, `mux_post`, `mux_list_rooms` |
@@ -61,6 +61,8 @@ agentmux bot ask grok:job-hunter off
 ```
 
 A bot can only `mux_reply` to tickets addressed to itself.
+
+**Guard (optional):** with a guard engine on (Jeff, or your writer LLM), each question a bot sends is screened before any local agent is woken. A likely prompt injection is refused and recorded in the **Cloud bots** room. See [Engines](./engines.md).
 
 ## Waking a bot: webhooks
 

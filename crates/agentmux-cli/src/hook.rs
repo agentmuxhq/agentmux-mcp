@@ -23,7 +23,8 @@ pub fn run(target: &str, on: bool, off: bool) -> Result<()> {
         return Ok(());
     }
     if let Ok(vault) = Vault::open() {
-        if let Ok(Some(text)) = claude_code::hook_context(&vault) {
+        let ev = claude_code::HookEvent::parse(&buf);
+        if let Ok(Some(text)) = claude_code::on_hook(&vault, &ev) {
             println!("{text}");
         }
     }

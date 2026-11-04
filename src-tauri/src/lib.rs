@@ -163,7 +163,23 @@ async fn disconnect_provider(state: State<'_, AppState>, id: String) -> Result<S
 
 #[tauri::command]
 fn get_messages(state: State<'_, AppState>, session_id: String) -> Result<Value, String> {
-    Ok(json!(state.core.vault.messages(&session_id).map_err(err)?))
+    let v = &state.core.vault;
+    let mut msgs = v.messages(&session_id).map_err(err)?;
+    for m in msgs.iter_mut() {
+        let atts = agentmux_core::media::list_for_message(v, m["id"].as_str().unwrap_or("")).unwrap_or_default();
+        if !atts.is_empty() {
+            m["attachments"] = json!(atts);
+        }
+    }
+    Ok(json!(msgs))
+}
+
+/// Store files picked in the composer (`{data: base64, name, mime}` or `{path}`), returning their
+/// ids and the line describing them for the message text.
+fn store_ui_attachments(core: &Core, attachments: &Option<Vec<Value>>) -> Result<(Vec<String>, String), String> {
+    let Some(list) = attachments.as_ref().filter(|l| !l.is_empty()) else { return Ok((vec![], String::new())) };
+    let saved: Vec<Value> = list.iter().map(|a| agentmux_core::media::save(&core.vault, "", "", a, true)).collect::<anyhow::Result<_>>().map_err(err)?;
+    Ok((saved.iter().filter_map(|x| x["id"].as_str().map(String::from)).collect(), agentmux_core::media::describe(&saved)))
 }
 
 /// Send a message as the human user to an agent; the reply arrives as a `mux://event`.
@@ -175,11 +191,105 @@ async fn send_message(
     to: String,
     text: String,
     then: Option<String>,
+    attachments: Option<Vec<Value>>,
 ) -> Result<String, String> {
     let ws = room_workspace(&state.core, &room)?;
     let then = then.filter(|t| !t.is_empty() && t != "none");
+    let (ids, desc) = store_ui_attachments(&state.core, &attachments)?;
+    let text = if desc.is_empty() { text } else { format!("{text}\n{desc}") };
+    let opts = agentmux_core::AskOpts { attachments: ids, ..Default::default() };
     // The UI sends into the session you're looking at.
-    state.core.start_ticket_in(&user_ctx(&ws), Some(&room), session.as_deref(), &to, &text, then).map_err(err)
+    state.core.start_ticket_with(&user_ctx(&ws), Some(&room), session.as_deref(), &to, &text, then, &opts).map_err(err)
+}
+
+/// Ask everyone in the thread at once (a group message). Returns the tickets started.
+#[tauri::command]
+async fn ask_all(state: State<'_, AppState>, room: String, session: String, text: String, attachments: Option<Vec<Value>>) -> Result<Value, String> {
+    let ws = room_workspace(&state.core, &room)?;
+    let members = state.core.vault.session_members(&session).map_err(err)?;
+    if members.is_empty() {
+        return Err("nobody is in this thread yet: ask an agent first".into());
+    }
+    let (ids, desc) = store_ui_attachments(&state.core, &attachments)?;
+    let text = if desc.is_empty() { text } else { format!("{text}\n{desc}") };
+    let mut out = vec![];
+    for (i, m) in members.iter().enumerate() {
+        let opts = agentmux_core::AskOpts { attachments: if i == 0 { ids.clone() } else { vec![] }, ..Default::default() };
+        match state.core.start_ticket_with(&user_ctx(&ws), Some(&room), Some(&session), m, &text, None, &opts) {
+            Ok(t) => out.push(json!({"to": m, "ticket": t})),
+            Err(e) => out.push(json!({"to": m, "error": e.to_string()})),
+        }
+    }
+    Ok(json!(out))
+}
+
+/// Settings the UI may read and change directly (everything else has its own command).
+const UI_SETTINGS: &[&str] = &["media.max_mb", "rooms.wake_on_change", "engine.guard.threshold"];
+
+#[tauri::command]
+fn get_app_setting(state: State<'_, AppState>, key: String) -> Result<Option<String>, String> {
+    if !UI_SETTINGS.contains(&key.as_str()) {
+        return Err(format!("'{key}' isn't a UI setting"));
+    }
+    state.core.vault.setting(&key).map_err(err)
+}
+
+#[tauri::command]
+fn set_app_setting(state: State<'_, AppState>, key: String, value: String) -> Result<(), String> {
+    if !UI_SETTINGS.contains(&key.as_str()) {
+        return Err(format!("'{key}' isn't a UI setting"));
+    }
+    state.core.vault.set_setting(&key, &value).map_err(err)
+}
+
+#[tauri::command]
+fn engines_status(state: State<'_, AppState>) -> Value {
+    agentmux_core::engines::status(&state.core.vault)
+}
+
+#[tauri::command]
+fn engines_configure(state: State<'_, AppState>, role: String, cfg: Value) -> Result<Value, String> {
+    agentmux_core::engines::configure(&state.core.vault, &role, &cfg).map_err(err)
+}
+
+#[tauri::command]
+async fn engines_test(state: State<'_, AppState>, role: String) -> Result<String, String> {
+    agentmux_core::engines::test(&state.core.vault, &role).await.map_err(err)
+}
+
+#[tauri::command]
+fn router_stats(state: State<'_, AppState>) -> Result<Value, String> {
+    agentmux_core::router::stats(&state.core.vault).map_err(err)
+}
+
+/// A thread's contextual summary; `refresh` rebuilds it now.
+#[tauri::command]
+async fn thread_summary(state: State<'_, AppState>, session: String, refresh: bool) -> Result<Value, String> {
+    let v = &state.core.vault;
+    if !refresh {
+        if let Some(s) = agentmux_core::memory::summary_of(v, &session).map_err(err)? {
+            return Ok(json!({"summary": s}));
+        }
+    }
+    let (s, engine) = agentmux_core::memory::summarize(v, &session).await.map_err(err)?;
+    Ok(json!({"summary": s, "engine": engine}))
+}
+
+#[tauri::command]
+async fn room_brief(state: State<'_, AppState>, room: String, refresh: bool) -> Result<String, String> {
+    let v = &state.core.vault;
+    if !refresh {
+        if let Some(b) = agentmux_core::memory::brief_of(v, &room).map_err(err)? {
+            return Ok(b);
+        }
+    }
+    agentmux_core::memory::brief(v, &room).await.map_err(err)
+}
+
+/// Search memory across every product (threads, best first).
+#[tauri::command]
+async fn memory_search(state: State<'_, AppState>, query: String) -> Result<Value, String> {
+    Ok(json!(agentmux_core::memory::search(&state.core.vault, &query, &agentmux_core::memory::Scope::All, 10).await.map_err(err)?))
 }
 
 /// Full wake -> reply round trip against one provider, in a scratch room.
@@ -710,6 +820,8 @@ pub fn run() {
             // while this app is that process ("embedded"), and hand the port back when it isn't.
             let st = status.clone();
             tauri::async_runtime::spawn(gw.serve_http_while(move || st.lock().unwrap().as_str() == "embedded"));
+            let st = status.clone();
+            tauri::async_runtime::spawn(core.clone().memory_worker(move || st.lock().unwrap().as_str() == "embedded"));
             // A tunnel from before a restart keeps serving Grok's existing connector URL.
             let gw = gateway.clone();
             tauri::async_runtime::spawn(async move {
@@ -838,6 +950,16 @@ pub fn run() {
             set_provider_option,
             get_messages,
             send_message,
+            ask_all,
+            engines_status,
+            get_app_setting,
+            set_app_setting,
+            engines_configure,
+            engines_test,
+            router_stats,
+            thread_summary,
+            room_brief,
+            memory_search,
             ping_provider,
             create_room,
             new_session,

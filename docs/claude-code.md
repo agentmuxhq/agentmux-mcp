@@ -59,3 +59,13 @@ Turn it on or off in the app (**Connect → Claude Code → Tell Claude Code wha
 agentmux hook claude-code --off
 agentmux hook claude-code --on
 ```
+
+## Chats remember their thread
+
+The hook also tells AgentMux *which* Claude Code chat is active in which folder. So:
+
+- **Continuing:** a question this chat asks without a topic continues the AgentMux thread it already uses.
+- **Separate chats:** another chat in the same folder gets its own thread.
+- **Coming back:** when you return to the chat, Claude is told which thread it's linked to and where that thread stands.
+
+See [Memory and routing](./memory.md#claude-code-chats).

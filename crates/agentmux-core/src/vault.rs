@@ -33,6 +33,20 @@ CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS context(
   room_id TEXT, kind TEXT, content TEXT, captured_at TEXT, PRIMARY KEY(room_id, kind));
 CREATE TABLE IF NOT EXISTS room_folders(path TEXT PRIMARY KEY, room_id TEXT);
+CREATE TABLE IF NOT EXISTS embeddings(
+  message_id TEXT PRIMARY KEY, session_id TEXT, room_id TEXT, model TEXT, vec BLOB);
+CREATE TABLE IF NOT EXISTS summaries(
+  session_id TEXT PRIMARY KEY, room_id TEXT, content TEXT, msg_count INTEGER, engine TEXT, updated_at TEXT,
+  model TEXT, vec BLOB);
+CREATE TABLE IF NOT EXISTS briefs(room_id TEXT PRIMARY KEY, content TEXT, updated_at TEXT);
+CREATE TABLE IF NOT EXISTS route_log(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT, agent TEXT, room_id TEXT, topic TEXT, method TEXT,
+  chosen TEXT, top TEXT, confidence REAL, engine TEXT, options TEXT, resolved TEXT);
+CREATE TABLE IF NOT EXISTS agent_threads(
+  agent TEXT, thread_key TEXT, cwd TEXT, session_id TEXT, last_seen TEXT, PRIMARY KEY(agent, thread_key));
+CREATE TABLE IF NOT EXISTS attachments(
+  id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, room_id TEXT, name TEXT, mime TEXT, size INTEGER,
+  path TEXT, caption TEXT, created_at TEXT);
 CREATE TABLE IF NOT EXISTS notices(
   id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT, room_id TEXT, text TEXT, created_at TEXT);
 "#;
@@ -537,6 +551,73 @@ impl Vault {
             .optional()?)
     }
 
+    /// Did `agent` ask or answer anything in this session?
+    pub fn last_pair_session_any(&self, session: &str, agent: &str) -> Result<bool> {
+        let n: i64 = self.conn.lock().unwrap().query_row(
+            "SELECT COUNT(*) FROM tickets WHERE session_id = ?1 AND (sender = ?2 OR recipient = ?2)",
+            params![session, agent],
+            |r| r.get(0),
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Agents that took part in a thread (asked, answered or posted).
+    pub fn session_members(&self, session: &str) -> Result<Vec<String>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare(
+            "SELECT DISTINCT who FROM (SELECT sender AS who, rowid AS r FROM messages WHERE session_id = ?1
+                                       UNION ALL SELECT recipient, rowid FROM messages WHERE session_id = ?1)
+             WHERE who IS NOT NULL AND who NOT IN ('user', 'agentmux', 'all') ORDER BY who",
+        )?;
+        Ok(st.query_map(params![session], |r| r.get(0))?.collect::<std::result::Result<_, _>>()?)
+    }
+
+    pub fn session_title(&self, session: &str) -> Result<Option<String>> {
+        Ok(self.conn.lock().unwrap().query_row("SELECT title FROM sessions WHERE id = ?1", params![session], |r| r.get(0)).optional()?)
+    }
+
+    /// A chat client reported its current chat (thread key) in `cwd` (Claude Code's hook does).
+    pub fn touch_thread(&self, agent: &str, key: &str, cwd: &str) -> Result<()> {
+        self.conn.lock().unwrap().execute(
+            "INSERT INTO agent_threads(agent, thread_key, cwd, session_id, last_seen) VALUES(?1,?2,?3,NULL,?4)
+             ON CONFLICT(agent, thread_key) DO UPDATE SET cwd = excluded.cwd, last_seen = excluded.last_seen",
+            params![agent, key, cwd, now()],
+        )?;
+        Ok(())
+    }
+
+    /// The chat `agent` is most recently active in, in this folder (within 15 minutes), and the
+    /// AgentMux thread it's bound to, if any.
+    pub fn active_thread(&self, agent: &str, cwd: &str) -> Result<Option<(String, Option<String>)>> {
+        let since = (Utc::now() - chrono::Duration::minutes(15)).to_rfc3339();
+        Ok(self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT thread_key, session_id FROM agent_threads WHERE agent = ?1 AND cwd = ?2 AND last_seen >= ?3 ORDER BY last_seen DESC LIMIT 1",
+                params![agent, cwd, since],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
+    }
+
+    pub fn bind_thread(&self, agent: &str, key: &str, session: &str) -> Result<()> {
+        self.conn.lock().unwrap().execute("UPDATE agent_threads SET session_id = ?3 WHERE agent = ?1 AND thread_key = ?2", params![agent, key, session])?;
+        Ok(())
+    }
+
+    /// The AgentMux thread a chat is bound to.
+    pub fn thread_binding(&self, agent: &str, key: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT session_id FROM agent_threads WHERE agent = ?1 AND thread_key = ?2", params![agent, key], |r| r.get(0))
+            .optional()?
+            .flatten())
+    }
+
     /// The room's sessions for an agent choosing where to talk: name, activity and who took part.
     pub fn session_list(&self, room: &str) -> Result<Vec<Value>> {
         let c = self.conn.lock().unwrap();
@@ -904,6 +985,11 @@ impl Vault {
     /// Write `threads/<room>.md` atomically with 0600 permissions.
 /// Consistent copy of the whole vault (safe while the app is running), for example before an
     /// update. Written as `<dir>/vault-<label>-<timestamp>.db` (0600); only the newest `keep` are kept.
+    /// Direct access for the memory, routing and media modules, which own their tables.
+    pub(crate) fn conn(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap()
+    }
+
     pub fn threads_dir(&self) -> &Path {
         &self.threads_dir
     }

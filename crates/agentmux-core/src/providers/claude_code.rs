@@ -150,6 +150,56 @@ impl Provider for ClaudeCode {
     }
 }
 
+/// The hook's view of the current Claude Code chat: which event, which chat, which folder.
+#[derive(Default, Debug, Clone)]
+pub struct HookEvent {
+    pub event: String,
+    pub chat: Option<String>,
+    pub cwd: Option<String>,
+}
+
+impl HookEvent {
+    pub fn parse(stdin: &str) -> HookEvent {
+        let v: Value = serde_json::from_str(stdin).unwrap_or(Value::Null);
+        HookEvent {
+            event: v["hook_event_name"].as_str().unwrap_or("").to_string(),
+            chat: v["session_id"].as_str().filter(|s| !s.is_empty()).map(String::from),
+            cwd: v["cwd"].as_str().filter(|s| !s.is_empty()).map(String::from),
+        }
+    }
+}
+
+/// Run by the hook: remember which Claude chat is active in which folder (so questions it asks go
+/// to that chat's AgentMux thread), then return what to add to Claude's context, if anything.
+pub fn on_hook(vault: &crate::Vault, ev: &HookEvent) -> Result<Option<String>> {
+    let mut lead = String::new();
+    if let (Some(chat), Some(cwd)) = (&ev.chat, &ev.cwd) {
+        let root = crate::context::workspace_root(Path::new(cwd));
+        vault.touch_thread("claude", chat, &root.to_string_lossy())?;
+        // When a chat starts (or resumes), say which AgentMux thread it belongs to and where it stands.
+        if ev.event == "SessionStart" {
+            if let Some(sess) = vault.thread_binding("claude", chat)? {
+                if let (Some(room), Some(title)) = (vault.session_room(&sess)?, vault.session_title(&sess)?) {
+                    let room_name = vault.room(&room)?.and_then(|r| r["title"].as_str().map(String::from)).unwrap_or_default();
+                    lead = format!("AgentMux: this chat is linked to the thread \"{room_name} › {title}\" (session {sess}). Questions you ask other agents from here continue it; mux_brief gives its full context.\n");
+                    if let Some(sum) = crate::memory::summary_of(vault, &sess)? {
+                        let state: String = sum.lines().skip_while(|l| !l.contains("Current state")).skip(1).take_while(|l| !l.starts_with("## ")).collect::<Vec<_>>().join("\n");
+                        if !state.trim().is_empty() {
+                            lead.push_str(&format!("Where it stands:\n{}\n", state.trim()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let updates = hook_context(vault)?;
+    Ok(match (lead.is_empty(), updates) {
+        (true, u) => u,
+        (false, None) => Some(lead),
+        (false, Some(u)) => Some(format!("{lead}\n{u}")),
+    })
+}
+
 /// The text the hook prints into Claude Code's context, or None when nothing is new.
 /// Advances Claude's read cursor, so each update is told once.
 pub fn hook_context(vault: &crate::Vault) -> Result<Option<String>> {

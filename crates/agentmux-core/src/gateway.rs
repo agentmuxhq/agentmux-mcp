@@ -33,7 +33,7 @@ fn token_secret(agent: &str) -> String {
     }
 }
 /// Tools a remote (tunnelled) caller may use.
-pub const REMOTE_TOOLS: &[&str] = &["mux_whoami", "mux_contacts", "mux_register", "mux_inbox", "mux_reply", "mux_updates", "mux_sessions"];
+pub const REMOTE_TOOLS: &[&str] = &["mux_whoami", "mux_contacts", "mux_register", "mux_inbox", "mux_reply", "mux_updates", "mux_sessions", "mux_search", "mux_brief"];
 /// Added for a bot that has been switched on to start conversations.
 pub const ASK_TOOLS: &[&str] = &["mux_ask_peer", "mux_get_reply"];
 /// Per bot: at most this many new questions to other agents per hour.
@@ -1078,6 +1078,33 @@ Delete that DNS record in the Cloudflare dashboard, then use a subdomain of {zon
         t.url.as_deref().and_then(|u| u.strip_prefix("https://")).is_some_and(|h| h.eq_ignore_ascii_case(name))
     }
 
+    /// When the guard engine is on and rates `question` as a likely prompt injection (at or above
+    /// `engine.guard.threshold`, default 0.8), the refusal to send back. The block is recorded in
+    /// the Cloud bots room so you can see it. A guard that fails lets the question through and logs why.
+    pub async fn guard_blocks(&self, agent: &str, question: &str) -> Option<String> {
+        let v = &self.core.vault;
+        let p = match crate::engines::guard(v, question).await {
+            Ok(Some(p)) => p,
+            Ok(None) => return None,
+            Err(e) => {
+                tracing::warn!("guard engine failed; letting @{agent}'s question through: {e}");
+                return None;
+            }
+        };
+        let threshold = v.setting("engine.guard.threshold").ok().flatten().and_then(|t| t.parse::<f64>().ok()).unwrap_or(0.8);
+        if p < threshold {
+            return None;
+        }
+        let home = crate::config::home().to_string_lossy().to_string();
+        if let Ok((room, sess)) = v.ensure_room(&home, "") {
+            let text = format!("Blocked a question from @{agent}: the guard rated it {p:.2} likely to be a prompt injection. It was: {}", crate::memory::clip(question, 400));
+            if let Ok(msg) = v.add_message(&sess, &room, "agentmux", Some("user"), "system", &text, None, None) {
+                self.core.emit("message", msg);
+            }
+        }
+        Some(format!("AgentMux's guard blocked this question (rated {p:.2} likely to be a prompt injection). Rephrase it as a plain request."))
+    }
+
     /// Crude brute-force / flood guard: 300 requests and 10 bad tokens per minute.
     fn admit(&self) -> bool {
         let mut l = self.limiter.lock().unwrap();
@@ -1139,7 +1166,7 @@ async fn mcp_post(State(g): State<Arc<Gateway>>, headers: HeaderMap, body: Bytes
         let (ctx, tools, agent) = (ctx.clone(), tools.clone(), agent.clone());
         async move {
             // Listing sessions stays in the bot's own neutral room: no peeking at a workspace's topics.
-            if item["method"] == "tools/call" && item["params"]["name"] == "mux_sessions" {
+            if item["method"] == "tools/call" && matches!(item["params"]["name"].as_str(), Some("mux_sessions") | Some("mux_brief")) {
                 if let Some(a) = item["params"]["arguments"].as_object_mut() {
                     a.remove("room");
                 }
@@ -1155,6 +1182,12 @@ async fn mcp_post(State(g): State<Arc<Gateway>>, headers: HeaderMap, body: Bytes
                     let id = item.get("id").cloned().unwrap_or(Value::Null);
                     return Some(json!({"jsonrpc": "2.0", "id": id, "result": {"isError": true,
                         "content": [{"type": "text", "text": format!("question limit reached ({MAX_ASKS_PER_HOUR} per hour); try again later")}]}}));
+                }
+                // The guard (optional): screen a cloud bot's question before a local agent reads it.
+                let q = item["params"]["arguments"]["question"].as_str().unwrap_or("").to_string();
+                if let Some(blocked) = g.guard_blocks(&agent, &q).await {
+                    let id = item.get("id").cloned().unwrap_or(Value::Null);
+                    return Some(json!({"jsonrpc": "2.0", "id": id, "result": {"isError": true, "content": [{"type": "text", "text": blocked}]}}));
                 }
             }
             mcp::handle_scoped(&g.core, &ctx, item, Some(&tools)).await

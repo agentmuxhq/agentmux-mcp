@@ -94,6 +94,21 @@ enum Cmd {
         #[arg(long)]
         off: bool,
     },
+    /// Search memory across every product: agentmux search "animation handoff"
+    Search { query: Vec<String> },
+    /// A thread's contextual summary, found by what you ask: agentmux brief "what happened to the animation?"
+    Brief { query: Vec<String> },
+    /// Optional engines: status | set <role> <kind> [url] [model] | test <role>   (roles: writer embed decide guard)
+    Engine {
+        #[arg(default_value = "status")]
+        action: String,
+        args: Vec<String>,
+    },
+    /// Routing stats: how often AgentMux had to ask, and whether a decision model (Jeff) would help.
+    Router {
+        #[arg(default_value = "stats")]
+        action: String,
+    },
     /// Custom providers from TOML manifests: list | add <file.toml> | remove <id>
     Provider {
         #[arg(default_value = "list")]
@@ -151,6 +166,17 @@ async fn main() -> Result<()> {
         }
         Cmd::Hook { target, on, off } => hook::run(&target, on, off),
         Cmd::Provider { action, arg } => provider_cmd(&action, arg.as_deref()),
+        Cmd::Search { query } => search_cmd(&query.join(" ")).await,
+        Cmd::Brief { query } => brief_cmd(&query.join(" ")).await,
+        Cmd::Engine { action, args } => engine_cmd(&action, &args).await,
+        Cmd::Router { action } => {
+            if action != "stats" {
+                bail!("usage: agentmux router stats");
+            }
+            let v = agentmux_core::Vault::open()?;
+            println!("{}", serde_json::to_string_pretty(&agentmux_core::router::stats(&v)?)?);
+            Ok(())
+        }
         Cmd::Disconnect { agent } => each(&agent, |id| {
             let msg = connectors::uninstall(id)?;
             if let Ok(v) = agentmux_core::Vault::open() {
@@ -615,5 +641,71 @@ fn provider_cmd(action: &str, arg: Option<&str>) -> Result<()> {
             Ok(())
         }
         _ => bail!("usage: agentmux provider list | add <file.toml> | remove <id>"),
+    }
+}
+
+async fn search_cmd(q: &str) -> Result<()> {
+    let v = agentmux_core::Vault::open()?;
+    let hits = agentmux_core::memory::search(&v, q, &agentmux_core::memory::Scope::All, 8).await?;
+    if hits.is_empty() {
+        println!("Nothing found for \"{q}\".");
+    }
+    for h in hits {
+        println!("{} › {}   [{}]  session {}", h["roomName"].as_str().unwrap_or(""), h["thread"].as_str().unwrap_or(""),
+            h["matched"].as_array().map(|m| m.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default(),
+            h["session"].as_str().unwrap_or(""));
+        if let Some(s) = h["currentState"].as_str() {
+            println!("  now: {s}");
+        }
+        for sn in h["snippets"].as_array().into_iter().flatten().take(2) {
+            println!("  {}: {}", sn["from"].as_str().unwrap_or(""), sn["text"].as_str().unwrap_or("").replace('\n', " ").chars().take(160).collect::<String>());
+        }
+    }
+    Ok(())
+}
+
+async fn brief_cmd(q: &str) -> Result<()> {
+    let v = agentmux_core::Vault::open()?;
+    let hits = agentmux_core::memory::search(&v, q, &agentmux_core::memory::Scope::All, 1).await?;
+    let Some(h) = hits.first() else {
+        println!("Nothing found for \"{q}\".");
+        return Ok(());
+    };
+    let (summary, engine) = agentmux_core::memory::summarize(&v, h["session"].as_str().unwrap_or("")).await?;
+    println!("{} › {}  (summary by {engine})\n\n{summary}", h["roomName"].as_str().unwrap_or(""), h["thread"].as_str().unwrap_or(""));
+    Ok(())
+}
+
+async fn engine_cmd(action: &str, args: &[String]) -> Result<()> {
+    use agentmux_core::engines;
+    let v = agentmux_core::Vault::open()?;
+    match (action, args) {
+        ("status", _) => {
+            let st = engines::status(&v);
+            for r in engines::ROLES {
+                let e = &st[r];
+                println!("{r:<7} {:<8} {} {}{}", e["kind"].as_str().unwrap_or(""), e["url"].as_str().unwrap_or(""), e["model"].as_str().unwrap_or(""),
+                    if e["cloud"] == true { "   (sends data off this Mac)" } else { "" });
+            }
+            println!("\nThis Mac: {} GB. {}", st["ramGb"], st["recommendation"].as_str().unwrap_or(""));
+            Ok(())
+        }
+        ("set", [role, kind, rest @ ..]) => {
+            let mut cfg = json!({"kind": kind});
+            if let Some(u) = rest.first() {
+                cfg["url"] = json!(u);
+            }
+            if let Some(m) = rest.get(1) {
+                cfg[if kind == "agent" { "agent" } else { "model" }] = json!(m);
+            }
+            let d = engines::configure(&v, role, &cfg)?;
+            println!("✓ {role}: {} {} {}", d["kind"].as_str().unwrap_or(""), d["url"].as_str().unwrap_or(""), d["model"].as_str().unwrap_or(""));
+            Ok(())
+        }
+        ("test", [role]) => {
+            println!("{}", engines::test(&v, role).await?);
+            Ok(())
+        }
+        _ => bail!("usage: agentmux engine status | set <writer|embed|decide|guard> <kind> [url] [model] | test <role>"),
     }
 }

@@ -122,7 +122,46 @@ export interface Overview {
   catalog: CatalogEntry[];
   rooms: Room[];
 }
+export interface Attachment {
+  id: string;
+  message: string | null;
+  name: string;
+  mime: string;
+  size: number;
+  path: string;
+  caption: string | null;
+}
+export interface ThreadHit {
+  room: string;
+  roomName: string;
+  session: string;
+  thread: string;
+  score: number;
+  matched: string[];
+  lastActivity: string | null;
+  currentState: string | null;
+  snippets: { message: string; from: string; at: string; text: string }[];
+}
+export interface EngineRole {
+  role: string;
+  kind: string;
+  url: string;
+  model: string;
+  agent: string;
+  enabled: boolean;
+  cloud: boolean;
+}
+export interface EnginesStatus {
+  writer: EngineRole;
+  embed: EngineRole;
+  decide: EngineRole;
+  guard: EngineRole;
+  apiKey: boolean;
+  ramGb: number;
+  recommendation: string;
+}
 export interface Message {
+  attachments?: Attachment[];
   id: string;
   sender: string;
   recipient: string | null;
@@ -202,8 +241,19 @@ export const api = {
   disconnect: (id: string) => call<string>("disconnect_provider", { id }),
   setProviderOption: (id: string, name: string, on: boolean) => call<string>("set_provider_option", { id, name, on }),
   messages: (sessionId: string) => call<Message[]>("get_messages", { sessionId }),
-  send: (room: string, session: string | null, to: string, text: string, then?: string) =>
-    call<string>("send_message", { room, session, to, text, then: then ?? null }),
+  send: (room: string, session: string | null, to: string, text: string, then?: string, attachments?: unknown[]) =>
+    call<string>("send_message", { room, session, to, text, then: then ?? null, attachments: attachments ?? null }),
+  askAll: (room: string, session: string, text: string, attachments?: unknown[]) =>
+    call<{ to: string; ticket?: string; error?: string }[]>("ask_all", { room, session, text, attachments: attachments ?? null }),
+  memorySearch: (query: string) => call<ThreadHit[]>("memory_search", { query }),
+  threadSummary: (session: string, refresh: boolean) => call<{ summary: string; engine?: string }>("thread_summary", { session, refresh }),
+  roomBrief: (room: string, refresh: boolean) => call<string>("room_brief", { room, refresh }),
+  enginesStatus: () => call<EnginesStatus>("engines_status"),
+  enginesConfigure: (role: string, cfg: Record<string, string>) => call<EngineRole>("engines_configure", { role, cfg }),
+  enginesTest: (role: string) => call<string>("engines_test", { role }),
+  routerStats: () => call<Record<string, unknown>>("router_stats"),
+  getSetting: (key: string) => call<string | null>("get_app_setting", { key }),
+  setSetting: (key: string, value: string) => call<void>("set_app_setting", { key, value }),
   ping: (id: string) => call<string>("ping_provider", { id }),
   createRoom: (path: string, members: string[] = []) => call<string>("create_room", { path, members }),
   addBot: (name: string) => call<string>("add_bot", { name }),

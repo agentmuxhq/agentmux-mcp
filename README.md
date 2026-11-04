@@ -118,6 +118,17 @@ Grok bots run in the cloud, so they reach AgentMux through a tunnel: `agentmux t
   - each pair of agents can have only one open question at a time;
   - a Grok bot's token only allows answering its own questions.
 
+## Memory
+
+AgentMux remembers every conversation between your agents.
+- **Search:** it searches them across products, by words or by meaning.
+- **Summaries:** every thread keeps a contextual summary (goal, decisions and why, current state, open items, who's involved, key files), and every product keeps a brief.
+- **Answers from memory:** any agent can ask "what happened to the animation handoff?" and get the thread's context.
+- **Routing:** topics route to the right thread, and AgentMux asks you when it isn't sure.
+- **Group threads:** threads work like group chats.
+- **Media:** images, audio and video can be attached.
+- **Optional engines:** a local LLM, a cloud key, or [Jeff](docs/engines.md) make it smarter. See [Memory and routing](docs/memory.md).
+
 ## Providers
 
 Each agent is a provider: one file in `crates/agentmux-core/src/providers/`. Cursor, Claude Code, ChatGPT/Codex, Gemini CLI and Grok bots are built in. Any CLI agent can be added with a [TOML manifest](docs/custom-agents.md) (`agentmux provider add my-agent.toml`), or in Rust ([guide](docs/adding-a-provider.md)). PRs for new providers are very welcome.

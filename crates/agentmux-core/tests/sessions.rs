@@ -101,7 +101,7 @@ async fn orphaned_wake_tickets_are_swept_but_inbox_ones_are_kept() {
 }
 
 fn ask(core: &Arc<Core>, from: &str, ws: &str, to: &str, topic: Option<&str>, new_session: bool) -> String {
-    let opts = AskOpts { topic: topic.map(String::from), new_session };
+    let opts = AskOpts { topic: topic.map(String::from), new_session, ..Default::default() };
     let t = core.start_ticket_with(&ctx(from, ws), None, None, to, "q", None, &opts).unwrap();
     core.finish(&t, "answered", "ok", None).unwrap();
     session_of(core, &t)

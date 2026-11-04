@@ -83,6 +83,10 @@ A reply reaches the asking chat in three ways:
 | `mux_ask_peer` | Ask another agent; returns the answer or a pending ticket |
 | `mux_get_reply` | Fetch or wait for a ticket's answer |
 | `mux_sessions` | The room's sessions (topics), with last activity and participants |
+| `mux_search` | Search memory across every product: threads, why they matched, where they stand |
+| `mux_brief` | A thread's contextual summary and recent messages, or an answer from that memory ([Memory](./memory.md)) |
+| `mux_ask_all` | Ask everyone in a thread at once and gather the answers |
+| `mux_attachment` | Fetch an attachment (images come back as images) |
 | `mux_use_room` | File the current folder under a product room by name (creates it if needed) |
 | `mux_rename_room` | Rename a room; everyone involved is told |
 | `mux_updates` | What's new for you since you last checked |

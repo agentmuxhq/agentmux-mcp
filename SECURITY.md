@@ -33,6 +33,9 @@ There is no telemetry and no account.
   - the `Host` header must match the active tunnel, and requests and bad tokens are rate-limited;
   - tunnels are off by default and stop when you quit from the tray.
 - **Claude Code hook:** with the hook on, Claude Code runs `~/.agentmux/bin/agentmux hook claude-code` on each prompt. It only reads the local vault and prints Claude's own unread updates. It stays silent inside AgentMux's own headless runs, and it edits only its own entries in `~/.claude/settings.json` (a backup is kept).
+- **Memory:** search and summaries run on your Mac. Cloud bots can only search, brief or fetch attachments from threads they took part in, and can't pick a room.
+- **Engines are optional and off by default.** An engine on `127.0.0.1` keeps data local. A cloud engine (a cloud key or a remote URL) sends the text it works on to that service, and the app marks it as such. The cloud key is kept in the Keychain. The optional **guard** screens cloud bots' questions for prompt injection before local agents are woken.
+- **Media:** attachments are copied into `~/.agentmux/media` (0700 folder, 0600 files), limited to images, audio, video and PDFs, 50 MB each by default. The app can only display files from that folder (Tauri asset scope). Cloud bots can't attach by path.
 - **Custom providers** (`~/.agentmux/providers/*.toml`) run the CLI you name, with arguments passed directly (never through a shell) and only the `{prompt}`, `{workspace}` and `{ticket}` placeholders. Only install manifests you trust, as you would any program.
 - **Webhooks:** https only (loopback http is allowed for testing), no credentials in the URL, redirects disabled so the key is never forwarded.
 - **Known gaps:**

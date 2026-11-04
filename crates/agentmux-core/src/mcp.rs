@@ -33,7 +33,7 @@ pub fn tools() -> Vec<Value> {
         tool(
             "mux_post",
             "Post a note into the room's current session for all agents to see.",
-            json!({"room": room, "text": {"type": "string"}}),
+            json!({"room": room, "text": {"type": "string"}, "attachments": {"type": "array", "description": "Images, audio, video or PDFs: [{path} for a file on this Mac, or {data: base64, name, mime}], each with an optional caption", "items": {"type": "object"}}}),
             &["text"],
         ),
         tool(
@@ -44,6 +44,7 @@ pub fn tools() -> Vec<Value> {
                 "question": {"type": "string"},
                 "room": room,
                 "wait_s": {"type": "integer", "description": "Seconds to wait for the reply (default 50, max 110)"},
+                "attachments": {"type": "array", "description": "Images, audio, video or PDFs: [{path} for a file on this Mac, or {data: base64, name, mime}], each with an optional caption", "items": {"type": "object"}},
                 "topic": {"type": "string", "description": "Short name of what this conversation is about, e.g. \"release plan\" or \"QA\". Questions on the same topic go to the same session, even days later; a new topic gets its own session. Reuse names from mux_sessions"},
                 "new_session": {"type": "boolean", "description": "Start a fresh session even if one on this topic exists. Only when the user asks for a new one"},
                 "session": {"type": "string", "description": "Continue this exact session id. Without topic or session, you continue the session where you last talked with this agent"},
@@ -70,6 +71,31 @@ pub fn tools() -> Vec<Value> {
             &[],
         ),
         tool(
+            "mux_ask_all",
+            "Ask everyone in a thread at once, like a group chat: each member is woken and the answers come back together. Pick the thread by `session` or `topic` (default: your current thread).",
+            json!({"question": {"type": "string"}, "topic": {"type": "string"}, "session": {"type": "string"},
+                   "wait_s": {"type": "integer", "description": "Seconds to wait for answers (default 60, max 110)"}, "attachments": {"type": "array", "description": "Images, audio, video or PDFs: [{path} for a file on this Mac, or {data: base64, name, mime}], each with an optional caption", "items": {"type": "object"}}}),
+            &["question"],
+        ),
+        tool(
+            "mux_attachment",
+            "Get an attachment by id: images come back as images; other files as their path (or data, for cloud bots).",
+            json!({"id": {"type": "string"}}),
+            &["id"],
+        ),
+        tool(
+            "mux_search",
+            "Search AgentMux memory across every product: finds the threads where something was discussed (by words, thread names, summaries, and meaning when enabled), with their current state and the best snippets.",
+            json!({"query": {"type": "string", "description": "What to look for, e.g. \"animation handoff\""}, "limit": {"type": "integer", "description": "Threads to return (default 5)"}}),
+            &["query"],
+        ),
+        tool(
+            "mux_brief",
+            "Get the context of a thread: its contextual summary (goal, decisions and why, current state, open items, who, key artifacts) and recent messages. Find it by `query` (\"what happened to the animation handoff?\"), `topic`, `session`, or omit all for your current product's brief. Pass `question` to get an answer from that memory when a writer engine is on.",
+            json!({"query": {"type": "string"}, "topic": {"type": "string"}, "session": {"type": "string"}, "room": room, "question": {"type": "string"}}),
+            &[],
+        ),
+        tool(
             "mux_use_room",
             "File your current folder under a product room by name (creating it if needed). Questions you ask from this folder go there from now on. Use it when the user says which product this work belongs to.",
             json!({"name": {"type": "string", "description": "The product/room name, e.g. Animation"}}),
@@ -91,7 +117,7 @@ pub fn tools() -> Vec<Value> {
         tool(
             "mux_reply",
             "Answer a question from your inbox.",
-            json!({"ticket": {"type": "string"}, "text": {"type": "string"}, "code": {"type": "string"}}),
+            json!({"ticket": {"type": "string"}, "text": {"type": "string"}, "code": {"type": "string"}, "attachments": {"type": "array", "description": "Images, audio, video or PDFs: [{path} for a file on this Mac, or {data: base64, name, mime}], each with an optional caption", "items": {"type": "object"}}}),
             &["ticket", "text"],
         ),
         tool(
@@ -157,7 +183,18 @@ pub async fn handle_scoped(core: &Arc<Core>, ctx: &CallerCtx, req: Value, allowe
                 err(&format!("tool '{name}' is not available on this connection"))
             } else {
                 match call_tool(core, ctx, &name, &args).await {
-                    Ok(v) => ok(&v),
+                    Ok(v) => {
+                        let mut out = ok(&v);
+                        // Multimodal agents on this Mac see attached images, not just their names.
+                        if !crate::providers::remote_access(&ctx.agent) {
+                            if let Some(atts) = v["attachments"].as_array() {
+                                for b in crate::media::image_blocks(atts, 4) {
+                                    out["content"].as_array_mut().unwrap().push(b);
+                                }
+                            }
+                        }
+                        out
+                    }
                     Err(e) => err(&e.to_string()),
                 }
             };
@@ -207,10 +244,16 @@ async fn call_tool(core: &Arc<Core>, ctx: &CallerCtx, name: &str, a: &Value) -> 
                 bail!("text is required");
             }
             let (room, sess) = core.resolve_room(ctx, arg_str(a, "room"))?;
-            let msg = core.vault.add_message(&sess, &room, &ctx.agent, Some("all"), "context_sync", text, None, None)?;
+            let (ids, desc) = store_attachments(core, ctx, a)?;
+            let body = if desc.is_empty() { text.to_string() } else { format!("{text}\n{desc}") };
+            let msg = core.vault.add_message(&sess, &room, &ctx.agent, Some("all"), "context_sync", &body, None, None)?;
+            if let Some(mid) = msg["id"].as_str() {
+                crate::media::link(&core.vault, &ids, mid)?;
+            }
             core.emit("message", msg.clone());
+            core.notify_thread(&sess, &room, &ctx.agent, None, &body)?;
             let _ = core.vault.export_markdown(&room);
-            Ok(json!({"posted": true, "room": room}))
+            Ok(json!({"posted": true, "room": room, "attachments": ids}))
         }
         "mux_ask_peer" => {
             let to = arg_str(a, "to").unwrap_or("");
@@ -223,13 +266,44 @@ async fn call_tool(core: &Arc<Core>, ctx: &CallerCtx, name: &str, a: &Value) -> 
             // user which product it belongs to.
             let root = crate::context::workspace_root(std::path::Path::new(&ctx.cwd));
             let new_folder = arg_str(a, "room").is_none() && root != crate::config::home() && core.vault.folder_room(&root.to_string_lossy())?.is_none();
-            let opts = crate::core::AskOpts {
-                topic: arg_str(a, "topic").map(String::from),
-                new_session: a.get("new_session").and_then(|v| v.as_bool()).unwrap_or(false),
-            };
-            let ticket = core.start_ticket_with(ctx, arg_str(a, "room"), arg_str(a, "session"), to, q, arg_str(a, "then").map(String::from), &opts)?;
+            let topic = arg_str(a, "topic").filter(|t| !t.trim().is_empty());
+            let mut session = arg_str(a, "session").filter(|s| !s.is_empty()).map(String::from);
+            let mut new_session = a.get("new_session").and_then(|v| v.as_bool()).unwrap_or(false);
+            match (topic, &session) {
+                // A topic without a thread: the router decides, or hands the choice to the user.
+                (Some(t), None) if !new_session => {
+                    let (room, _) = core.resolve_room(ctx, arg_str(a, "room"))?;
+                    match crate::router::route(&core.vault, &ctx.agent, &room, t, q, !crate::providers::remote_access(&ctx.agent)).await? {
+                        crate::router::Route::Use { session: s, .. } => session = Some(s),
+                        crate::router::Route::New => new_session = true,
+                        crate::router::Route::Ask { options } => {
+                            return Ok(json!({"status": "needs_choice", "topic": t, "options": options,
+                                "note": "AgentMux isn't sure which thread this belongs to. Ask the user which one (show them the options), then call mux_ask_peer again with the same question and topic plus `session` set to their choice, or `new_session: true` for a new thread."}));
+                        }
+                    }
+                }
+                // The user answered an earlier "which thread?".
+                (Some(t), Some(s)) => {
+                    if let Some(room) = core.vault.session_room(s)? {
+                        crate::router::resolve(&core.vault, &ctx.agent, &room, t, s)?;
+                    }
+                }
+                (Some(t), None) => {
+                    let (room, _) = core.resolve_room(ctx, arg_str(a, "room"))?;
+                    crate::router::resolve(&core.vault, &ctx.agent, &room, t, "new")?;
+                }
+                _ => {}
+            }
+            let (ids, desc) = store_attachments(core, ctx, a)?;
+            let question = if desc.is_empty() { q.to_string() } else { format!("{q}\n{desc}") };
+            let opts = crate::core::AskOpts { topic: topic.map(String::from), new_session, attachments: ids };
+            let ticket = core.start_ticket_with(ctx, arg_str(a, "room"), session.as_deref(), to, &question, arg_str(a, "then").map(String::from), &opts)?;
             let t = core.wait_ticket(&ticket, wait).await?;
             let mut view = ticket_view(&t);
+            add_answer_attachments(core, &t, &mut view);
+            if let Some(title) = core.vault.session_title(t["sessionId"].as_str().unwrap_or(""))? {
+                view["thread"] = json!(title);
+            }
             if new_folder {
                 let rooms: Vec<String> = core
                     .vault
@@ -249,6 +323,32 @@ async fn call_tool(core: &Arc<Core>, ctx: &CallerCtx, name: &str, a: &Value) -> 
             }
             Ok(view)
         }
+        "mux_ask_all" => ask_all(core, ctx, a).await,
+        "mux_attachment" => {
+            let id = arg_str(a, "id").unwrap_or("");
+            let att = crate::media::get(&core.vault, id)?.ok_or_else(|| anyhow::anyhow!("unknown attachment '{id}'"))?;
+            if crate::providers::remote_access(&ctx.agent) {
+                let sess = crate::media::session_of(&core.vault, id)?.unwrap_or_default();
+                if !core.vault.last_pair_session_any(&sess, &ctx.agent)? {
+                    bail!("that attachment isn't in a thread you took part in");
+                }
+                let bytes = std::fs::read(att["path"].as_str().unwrap_or(""))?;
+                if bytes.len() > 10 * 1024 * 1024 {
+                    bail!("that file is over 10 MB, too big to send to a cloud bot");
+                }
+                use base64::Engine as _;
+                return Ok(json!({"id": id, "name": att["name"], "mime": att["mime"], "caption": att["caption"],
+                                 "data": base64::engine::general_purpose::STANDARD.encode(bytes)}));
+            }
+            Ok(json!({"attachments": [att]}))
+        }
+        "mux_search" => {
+            let scope = memory_scope(&ctx.agent);
+            let limit = a.get("limit").and_then(|v| v.as_u64()).unwrap_or(5).clamp(1, 20) as usize;
+            let hits = crate::memory::search(&core.vault, arg_str(a, "query").unwrap_or(""), &scope, limit).await?;
+            Ok(json!({"results": hits, "note": if hits.is_empty() { "Nothing found. Try other words, or mux_sessions for this product's threads." } else { "Use mux_brief with a result's session for its full context." }}))
+        }
+        "mux_brief" => brief(core, ctx, a).await,
         "mux_use_room" => {
             let name = arg_str(a, "name").unwrap_or("");
             let (room, created) = core.use_room(ctx, name)?;
@@ -266,7 +366,9 @@ async fn call_tool(core: &Arc<Core>, ctx: &CallerCtx, name: &str, a: &Value) -> 
             if t["from"] != ctx.agent.as_str() {
                 bail!("ticket {id} was not asked by you");
             }
-            Ok(ticket_view(&t))
+            let mut view = ticket_view(&t);
+            add_answer_attachments(core, &t, &mut view);
+            Ok(view)
         }
         "mux_register" => {
             core.vault.set_profile(&ctx.agent, arg_str(a, "name").unwrap_or(""), arg_str(a, "description"))?;
@@ -292,7 +394,9 @@ async fn call_tool(core: &Arc<Core>, ctx: &CallerCtx, name: &str, a: &Value) -> 
             if t["to"] != ctx.agent.as_str() {
                 bail!("ticket {id} is not addressed to you");
             }
-            let accepted = core.finish(id, "answered", text, arg_str(a, "code"))?;
+            let (ids, desc) = store_attachments(core, ctx, a)?;
+            let body = if desc.is_empty() { text.to_string() } else { format!("{text}\n{desc}") };
+            let accepted = core.finish_with(id, "answered", &body, arg_str(a, "code"), &ids)?;
             let late = t["status"] == "expired";
             Ok(json!({"accepted": accepted, "note": match (accepted, late) {
                 (true, true) => "late reply delivered",
@@ -324,4 +428,144 @@ fn ticket_view(t: &Value) -> Value {
         _ => json!({"status": t["status"], "ticket": t["id"],
                     "note": "Not answered yet. Call mux_get_reply with this ticket later."}),
     }
+}
+
+/// Agents on this Mac search every product; a cloud bot only the threads it took part in.
+fn memory_scope(agent: &str) -> crate::memory::Scope {
+    if crate::providers::remote_access(agent) { crate::memory::Scope::Participant(agent.to_string()) } else { crate::memory::Scope::All }
+}
+
+async fn brief(core: &Arc<Core>, ctx: &CallerCtx, a: &Value) -> Result<Value> {
+    use crate::memory;
+    let scope = memory_scope(&ctx.agent);
+    let mut others = vec![];
+    // Which thread: explicit session, a topic in the caller's product, or the best search match.
+    let session = if let Some(s) = arg_str(a, "session") {
+        Some(s.to_string())
+    } else if let Some(t) = arg_str(a, "topic") {
+        let (room, _) = core.resolve_room(ctx, arg_str(a, "room"))?;
+        core.vault.session_for_topic(&room, t)?
+    } else if let Some(q) = arg_str(a, "query").or(arg_str(a, "question")) {
+        let hits = memory::search(&core.vault, q, &scope, 4).await?;
+        others = hits.iter().skip(1).map(|h| json!({"session": h["session"], "room": h["roomName"], "thread": h["thread"]})).collect();
+        hits.first().and_then(|h| h["session"].as_str().map(String::from))
+    } else {
+        None
+    };
+    let Some(session) = session else {
+        // No thread asked for: the product brief.
+        let (room, _) = core.resolve_room(ctx, arg_str(a, "room"))?;
+        let b = match memory::brief_of(&core.vault, &room)? {
+            Some(b) => b,
+            None => memory::brief(&core.vault, &room).await?,
+        };
+        return Ok(json!({"room": room, "brief": b}));
+    };
+    if let memory::Scope::Participant(agent) = &scope {
+        let took_part: bool = core.vault.last_pair_session_any(&session, agent)?;
+        if !took_part {
+            anyhow::bail!("that thread isn't one you took part in");
+        }
+    }
+    let room = core.vault.session_room(&session)?.ok_or_else(|| anyhow::anyhow!("unknown session '{session}'"))?;
+    // A summary that's behind gets refreshed now, so the hand-over is current.
+    let (summary, engine) = memory::summarize(&core.vault, &session).await?;
+    let msgs = core.vault.messages(&session)?;
+    let recent: Vec<Value> = msgs
+        .iter()
+        .rev()
+        .filter(|m| m["type"] != "system")
+        .take(8)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(|m| json!({"from": m["sender"], "to": m["recipient"], "at": m["createdAt"], "text": memory::clip(m["text"].as_str().unwrap_or(""), 800)}))
+        .collect();
+    let room_v = core.vault.room(&room)?.unwrap_or(json!({}));
+    let thread = room_v["sessions"].as_array().and_then(|ss| ss.iter().find(|x| x["id"] == session.as_str()).map(|x| x["title"].clone())).unwrap_or(json!(null));
+    let mut out = json!({"room": room, "roomName": room_v["title"], "session": session, "thread": thread,
+                         "summary": summary, "summaryBy": engine, "recent": recent, "otherMatches": others,
+                         "attachments": crate::media::list_for_session(&core.vault, &session).unwrap_or_default()});
+    if let Some(q) = arg_str(a, "question") {
+        if crate::engines::Engine::load(&core.vault, "writer").enabled() {
+            let ctx_text = format!("Thread: {} › {}\n\n{summary}\n\nRecent messages:\n{}", room_v["title"].as_str().unwrap_or(""), thread.as_str().unwrap_or(""), serde_json::to_string_pretty(&recent)?);
+            match crate::engines::complete(&core.vault, "Answer the question from this thread's memory only. If the memory doesn't say, say so. Be brief and specific.", &format!("{ctx_text}\n\nQuestion: {q}")).await {
+                Ok(ans) => out["answer"] = json!(ans),
+                Err(e) => out["answerError"] = json!(e.to_string()),
+            }
+        } else {
+            out["note"] = json!("No writer engine is on, so here is the thread's memory to answer from.");
+        }
+    }
+    Ok(out)
+}
+
+/// Store a tool call's `attachments`, returning their ids and the line describing them.
+fn store_attachments(core: &Arc<Core>, ctx: &CallerCtx, a: &Value) -> Result<(Vec<String>, String)> {
+    let Some(list) = a.get("attachments").and_then(|v| v.as_array()).filter(|l| !l.is_empty()) else { return Ok((vec![], String::new())) };
+    if list.len() > 10 {
+        bail!("at most 10 attachments per message");
+    }
+    let local = !crate::providers::remote_access(&ctx.agent);
+    let saved: Vec<Value> = list.iter().map(|x| crate::media::save(&core.vault, "", "", x, local)).collect::<Result<_>>()?;
+    let ids = saved.iter().filter_map(|x| x["id"].as_str().map(String::from)).collect();
+    Ok((ids, crate::media::describe(&saved)))
+}
+
+fn add_answer_attachments(core: &Arc<Core>, t: &Value, view: &mut Value) {
+    if let Ok(atts) = crate::media::for_ticket_answer(&core.vault, t["id"].as_str().unwrap_or("")) {
+        if !atts.is_empty() {
+            view["attachments"] = json!(atts);
+        }
+    }
+}
+
+/// Ask every member of a thread at once and gather the answers.
+async fn ask_all(core: &Arc<Core>, ctx: &CallerCtx, a: &Value) -> Result<Value> {
+    let q = arg_str(a, "question").unwrap_or("");
+    if q.trim().is_empty() {
+        bail!("question is required");
+    }
+    let (room, latest) = core.resolve_room(ctx, None)?;
+    let session = if let Some(s) = arg_str(a, "session") {
+        s.to_string()
+    } else if let Some(t) = arg_str(a, "topic") {
+        core.vault.session_for_topic(&room, t)?.ok_or_else(|| anyhow::anyhow!("no thread on '{t}' in this product (see mux_sessions)"))?
+    } else {
+        let root = crate::context::workspace_root(std::path::Path::new(&ctx.cwd));
+        core.vault.active_thread(&ctx.agent, &root.to_string_lossy())?.and_then(|t| t.1).unwrap_or(latest)
+    };
+    let members: Vec<String> = core.vault.session_members(&session)?.into_iter().filter(|m| *m != ctx.agent).collect();
+    if members.is_empty() {
+        bail!("nobody else is in this thread yet; ask someone with mux_ask_peer first");
+    }
+    let (ids, desc) = store_attachments(core, ctx, a)?;
+    let question = if desc.is_empty() { q.to_string() } else { format!("{q}\n{desc}") };
+    let wait = a.get("wait_s").and_then(|v| v.as_u64()).unwrap_or(60).min(110);
+    let mut started = vec![];
+    let mut results = vec![];
+    for (i, m) in members.iter().enumerate() {
+        let opts = crate::core::AskOpts { attachments: if i == 0 { ids.clone() } else { vec![] }, ..Default::default() };
+        match core.start_ticket_with(ctx, None, Some(&session), m, &question, None, &opts) {
+            Ok(t) => started.push((m.clone(), t)),
+            Err(e) => results.push(json!({"to": m, "status": "not asked", "error": e.to_string()})),
+        }
+    }
+    let mut set = tokio::task::JoinSet::new();
+    for (m, t) in started {
+        let c = core.clone();
+        set.spawn(async move { (m, c.wait_ticket(&t, wait).await) });
+    }
+    while let Some(Ok((m, r))) = set.join_next().await {
+        match r {
+            Ok(t) => {
+                let mut v = ticket_view(&t);
+                v["to"] = json!(m);
+                add_answer_attachments(core, &t, &mut v);
+                results.push(v);
+            }
+            Err(e) => results.push(json!({"to": m, "status": "error", "error": e.to_string()})),
+        }
+    }
+    Ok(json!({"session": session, "thread": core.vault.session_title(&session)?, "results": results}))
 }

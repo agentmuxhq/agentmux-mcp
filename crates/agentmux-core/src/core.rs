@@ -15,6 +15,8 @@ pub struct AskOpts {
     pub topic: Option<String>,
     /// Start a fresh session even if one on this topic exists.
     pub new_session: bool,
+    /// Attachments already stored (`media::save`), linked to the question's message.
+    pub attachments: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -46,6 +48,45 @@ impl Core {
 
     pub fn emit(&self, kind: &str, data: Value) {
         let _ = self.events.send(json!({"kind": kind, "data": data}));
+    }
+
+    /// A thread is a group chat: everyone who took part hears about each new question, answer or
+    /// note, except the two agents it's between (they already have it). Shown in mux_updates and
+    /// the Claude Code hook.
+    pub fn notify_thread(&self, session: &str, room: &str, actor: &str, partner: Option<&str>, text: &str) -> Result<()> {
+        let members = self.vault.session_members(session)?;
+        if members.len() <= 2 {
+            return Ok(());
+        }
+        let title = self.vault.session_title(session)?.unwrap_or_default();
+        let room_name = self.vault.room(room)?.and_then(|r| r["title"].as_str().map(String::from)).unwrap_or_default();
+        let who = |id: &str| if id == "user" { "You".to_string() } else { self.vault.agent_name(id) };
+        let line = format!(
+            "{room_name} › {title}: {}{}: {}",
+            who(actor),
+            partner.map(|p| format!(" → {}", who(p))).unwrap_or_default(),
+            crate::memory::clip(text, 300)
+        );
+        for m in members.iter().filter(|m| m.as_str() != actor && Some(m.as_str()) != partner) {
+            self.vault.add_notice(m, room, &line)?;
+        }
+        Ok(())
+    }
+
+    /// Keep memory current while `owns()` (this process owns the socket): embed new messages, and
+    /// refresh the summaries and briefs of threads that changed and went quiet.
+    pub async fn memory_worker(self: Arc<Self>, owns: impl Fn() -> bool + Send + Sync + 'static) {
+        tokio::time::sleep(Duration::from_secs(15)).await;
+        loop {
+            if owns() {
+                match crate::memory::tick(&self.vault, 45, 4).await {
+                    Ok(0) => {}
+                    Ok(n) => self.emit("memory", json!({"summaries": n})),
+                    Err(e) => tracing::warn!("memory upkeep: {e}"),
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        }
     }
 
     // ───────── product rooms ─────────
@@ -290,11 +331,20 @@ impl Core {
             None => None,
         };
         let (room, latest) = self.resolve_room(ctx, room_hint.or(session_room.as_deref()))?;
+        // The caller's chat, when its client tells us which one it is (Claude Code via its hook).
+        let root = context::workspace_root(Path::new(&ctx.cwd));
+        let thread = self.vault.active_thread(&ctx.agent, &root.to_string_lossy())?;
+        let bound = thread.as_ref().and_then(|t| t.1.clone()).filter(|s| self.vault.session_room(s).ok().flatten().as_deref() == Some(room.as_str()));
         let sess = match (session_hint.filter(|s| !s.is_empty()), session_room) {
             (Some(s), Some(r)) if r == room => s.to_string(),
             (Some(s), _) => bail!("session '{s}' is not in room '{room}'"),
+            // This chat already has a thread here: keep talking in it unless a topic says otherwise.
+            _ if opts.topic.is_none() && !opts.new_session && bound.is_some() => bound.clone().unwrap(),
             _ => self.pick_session(&room, &latest, &ctx.agent, to, opts)?,
         };
+        if let Some((key, _)) = &thread {
+            self.vault.bind_thread(&ctx.agent, key, &sess)?;
+        }
         self.vault.add_member(&room, to)?;
 
         // Snapshot the asker's live git state so the peer sees what the caller sees. A product room
@@ -309,7 +359,11 @@ impl Core {
 
         let ticket = self.vault.create_ticket(&sess, &room, &ctx.agent, to, question, hop, then.as_deref())?;
         let msg = self.vault.add_message(&sess, &room, &ctx.agent, Some(to), "a2a_request", question, None, Some(&ticket))?;
+        if let Some(mid) = msg["id"].as_str() {
+            crate::media::link(&self.vault, &opts.attachments, mid)?;
+        }
         self.emit("message", msg);
+        self.notify_thread(&sess, &room, &ctx.agent, Some(to), question)?;
         self.emit("ticket", json!({"id": ticket, "status": "pending", "from": ctx.agent, "to": to, "room": room}));
         let _ = self.vault.export_markdown(&room);
 
@@ -404,6 +458,11 @@ impl Core {
 
     /// Record the answer (first answer wins), notify waiters, and run any `then` handoff.
     pub fn finish(self: &Arc<Self>, ticket_id: &str, status: &str, text: &str, code: Option<&str>) -> Result<bool> {
+        self.finish_with(ticket_id, status, text, code, &[])
+    }
+
+    /// `finish` with attachments (already stored) linked to the answer.
+    pub fn finish_with(self: &Arc<Self>, ticket_id: &str, status: &str, text: &str, code: Option<&str>, attachments: &[String]) -> Result<bool> {
         if !self.vault.answer_ticket(ticket_id, status, text)? {
             return Ok(false);
         }
@@ -422,8 +481,14 @@ impl Core {
             _ => format!("@{to} could not answer: {text}"),
         };
         let msg = self.vault.add_message(&sess, &room, sender, Some(&from), kind, &body, code, Some(ticket_id))?;
+        if let Some(mid) = msg["id"].as_str() {
+            crate::media::link(&self.vault, attachments, mid)?;
+        }
         let _ = self.vault.touch_provider(&to);
         self.emit("message", msg);
+        if status == "answered" {
+            self.notify_thread(&sess, &room, &to, Some(&from), text)?;
+        }
         self.emit("ticket", json!({"id": ticket_id, "status": status, "from": from, "to": to, "room": room}));
         let _ = self.vault.export_markdown(&room);
         self.notifier(ticket_id).notify_waiters();
@@ -520,6 +585,14 @@ fn build_prompt(vault: &Vault, t: &Value, room: &Value, allow_edits: bool) -> St
     }
     if !notes.is_empty() {
         p.push_str(&format!("\nShared notes:\n{notes}\n"));
+    }
+    let atts = crate::media::for_ticket_request(vault, t["id"].as_str().unwrap_or("")).unwrap_or_default();
+    if !atts.is_empty() {
+        p.push_str("\nAttached files (open them from disk):\n");
+        for a in atts {
+            p.push_str(&format!("- {} ({}){}\n", a["path"].as_str().unwrap_or(""), a["mime"].as_str().unwrap_or(""),
+                a["caption"].as_str().map(|c| format!(": {c}")).unwrap_or_default()));
+        }
     }
     p.push_str("\nAnswer directly and concisely. Your final message is delivered back to the asker as the reply.");
     if !allow_edits {
