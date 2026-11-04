@@ -11,10 +11,21 @@ fn extra_dirs() -> Vec<PathBuf> {
         v.push(h.join(".local/bin"));
         v.push(h.join(".claude/local"));
         v.push(h.join(".cargo/bin"));
-        if let Ok(rd) = std::fs::read_dir(h.join(".nvm/versions/node")) {
-            for e in rd.flatten() {
-                v.push(e.path().join("bin"));
+        // Global npm installs (gemini, codex, claude…) live wherever the user's Node manager puts
+        // them; an app or login service doesn't inherit the shell's PATH, so look in each.
+        for versions in [".nvm/versions/node", ".local/share/mise/installs/node", ".asdf/installs/nodejs", ".local/share/fnm/node-versions", "Library/Application Support/fnm/node-versions"] {
+            if let Ok(rd) = std::fs::read_dir(h.join(versions)) {
+                let mut dirs: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
+                dirs.sort();
+                dirs.reverse(); // newest version first
+                for d in dirs {
+                    v.push(d.join("bin"));
+                    v.push(d.join("installation/bin")); // fnm layout
+                }
             }
+        }
+        for d in [".local/share/mise/shims", ".asdf/shims", ".volta/bin", ".npm-global/bin", ".bun/bin", "Library/pnpm", ".yarn/bin"] {
+            v.push(h.join(d));
         }
     }
     v.push("/opt/homebrew/bin".into());
