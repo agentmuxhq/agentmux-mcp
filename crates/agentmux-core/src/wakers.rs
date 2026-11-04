@@ -55,9 +55,8 @@ pub fn find_bin(name: &str) -> Option<PathBuf> {
 const ENV_ALLOW: &[&str] = &[
     "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL", "TMPDIR", "TERM", "CURSOR_API_KEY", "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY", "CODEX_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME",
-    // Gemini CLI signs in with an API key, Vertex AI or a Google login; keep whichever is set up.
-    "GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION", "GOOGLE_GENAI_USE_VERTEXAI",
-    "GOOGLE_APPLICATION_CREDENTIALS", "CLOUDSDK_CONFIG",
+    // Not GEMINI_API_KEY / GOOGLE_*: Gemini CLI keeps its own login, and a stale key exported in a
+    // shell profile would override it (and an app started from that shell would pass it on).
 ];
 
 /// Run the agent's CLI headlessly and return its final stdout as the reply.
