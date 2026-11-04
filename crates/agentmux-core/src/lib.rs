@@ -13,5 +13,5 @@ pub mod vault;
 pub mod wakers;
 pub mod webhook;
 
-pub use crate::core::{CallerCtx, Core};
+pub use crate::core::{AskOpts, CallerCtx, Core};
 pub use crate::vault::Vault;

@@ -43,7 +43,7 @@ Paste the URL (`https://<host>/mcp`) and token into Grok as a custom MCP connect
 
 Remote callers never get the full tool set. A token is checked in constant time, bound to one bot, and the request's `Host` must match the active tunnel. It unlocks:
 
-| Always | `mux_whoami`, `mux_contacts`, `mux_register`, `mux_inbox`, `mux_reply`, `mux_updates` |
+| Always | `mux_whoami`, `mux_contacts`, `mux_register`, `mux_inbox`, `mux_reply`, `mux_updates`, `mux_sessions` (its own room only) |
 |---|---|
 | **With "start conversations"** (on by default) | `mux_ask_peer`, `mux_get_reply` |
 | Never | `mux_read_context`, `mux_publish_context`, `mux_post`, `mux_list_rooms` |

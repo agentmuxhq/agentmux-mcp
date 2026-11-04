@@ -60,8 +60,6 @@ pub fn webhook_timeout_secs() -> u64 {
     std::env::var("AGENTMUX_WAKE_TIMEOUT_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(900)
 }
 
-/// A new question to the same agent within this window continues the same session.
-pub const SESSION_CONTINUE_MINUTES: i64 = 30;
 
 /// Fixed (non-bot) agents: every registered provider's id. See `providers::all`.
 pub fn agent_ids() -> Vec<String> {

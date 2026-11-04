@@ -22,6 +22,7 @@ import ConnectModal from "./components/ConnectModal";
 import NewRoomModal from "./components/NewRoomModal";
 import Starter from "./components/Starter";
 import Markdown from "./components/Markdown";
+import EditableTitle from "./components/EditableTitle";
 import { UpdateRow } from "./components/UpdateControls";
 import PublicAccessCard from "./components/PublicAccessCard";
 import SettingsModal from "./components/SettingsModal";
@@ -364,7 +365,12 @@ export default function App() {
         <div data-tauri-drag-region className="flex h-12 shrink-0 items-center gap-3 border-b border-white/10 px-6">
           {room ? (
             <>
-              <span className="pointer-events-none font-display text-sm font-semibold">{room.title}</span>
+              <EditableTitle
+                value={room.title}
+                className="font-display text-sm font-semibold"
+                title="Double-click to rename this room"
+                onSave={(t) => api.renameRoom(room.id, t).then(refresh).catch((e) => setError(String(e)))}
+              />
               <span className="pointer-events-none flex items-center gap-1 text-xs text-zinc-500">
                 <GitBranch size={12} />
                 {room.branch || "no git"}
@@ -372,7 +378,9 @@ export default function App() {
               <button
                 className={`${btn} ml-auto`}
                 onClick={async () => {
-                  const id = await api.newSession(room.id, "").catch((e) => (setError(String(e)), null));
+                  const name = window.prompt("What is this session about? (e.g. Release plan, QA). Agents asking about the same topic land here.", "");
+                  if (name === null) return;
+                  const id = await api.newSession(room.id, name).catch((e) => (setError(String(e)), null));
                   if (id) setSessionId(id);
                   refresh();
                 }}
@@ -393,7 +401,11 @@ export default function App() {
                 onClick={() => setSessionId(s.id)}
                 className={`shrink-0 rounded-md px-3 py-1 text-xs ${s.id === sessionId ? "bg-white/10 text-white" : "text-zinc-500 hover:bg-white/5"}`}
               >
-                {s.title}
+                <EditableTitle
+                  value={s.title}
+                  title="Double-click to rename. The name is also the topic agents use to find this session"
+                  onSave={(t) => api.renameSession(s.id, t).then(refresh).catch((e) => setError(String(e)))}
+                />
               </button>
             ))}
           </div>

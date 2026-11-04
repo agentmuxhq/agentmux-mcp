@@ -1,6 +1,6 @@
 //! A session is one conversation: unrelated exchanges in the same workspace get their own.
 
-use agentmux_core::{CallerCtx, Core, Vault};
+use agentmux_core::{AskOpts, CallerCtx, Core, Vault};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -43,10 +43,9 @@ async fn sessions_follow_conversations() {
     assert!(title.contains("Claude Code ↔ Grok Bot"), "{title}");
     core.finish(&c, "answered", "ok", None).unwrap();
 
-    // Going back to the first pair now that it isn't the latest session: new session.
+    // Going back to the first pair later continues where they left off: no timer, no new session.
     let d = core.start_ticket(&ctx("cursor", &ws), None, "grok", "later", None).unwrap();
-    assert_ne!(session_of(&core, &d), s1);
-    assert_ne!(session_of(&core, &d), s2);
+    assert_eq!(session_of(&core, &d), s1);
     core.finish(&d, "answered", "ok", None).unwrap();
 
     // ...unless the caller asks to continue it.
@@ -99,4 +98,82 @@ async fn orphaned_wake_tickets_are_swept_but_inbox_ones_are_kept() {
     assert_eq!(core.vault.ticket(&inbox).unwrap().unwrap()["status"], "pending");
     // The pair is free again, so the user can ask once more.
     assert!(!core.vault.open_ticket_between("user", "claude").unwrap());
+}
+
+fn ask(core: &Arc<Core>, from: &str, ws: &str, to: &str, topic: Option<&str>, new_session: bool) -> String {
+    let opts = AskOpts { topic: topic.map(String::from), new_session };
+    let t = core.start_ticket_with(&ctx(from, ws), None, None, to, "q", None, &opts).unwrap();
+    core.finish(&t, "answered", "ok", None).unwrap();
+    session_of(core, &t)
+}
+
+fn title(core: &Core, session: &str) -> String {
+    let room = core.vault.session_room(session).unwrap().unwrap();
+    let r = core.vault.room(&room).unwrap().unwrap();
+    r["sessions"].as_array().unwrap().iter().find(|x| x["id"] == session).unwrap()["title"].as_str().unwrap().to_string()
+}
+
+/// Sessions are topics: the same topic returns to its session (across days and agents), a new
+/// topic gets its own, and nothing splits on a timer.
+#[tokio::test]
+async fn topics_route_to_their_sessions() {
+    let (core, ws) = test_core("topics");
+
+    // Claude asks Grok about the release: the room's empty first session takes that name.
+    let release = ask(&core, "claude", &ws, "grok", Some("Release plan"), false);
+    assert_eq!(title(&core, &release), "Release plan");
+
+    // A QA question is a different conversation.
+    let qa = ask(&core, "claude", &ws, "grok", Some("QA"), false);
+    assert_ne!(qa, release);
+    assert_eq!(title(&core, &qa), "QA");
+
+    // Back to the release: same session, whatever the wording.
+    assert_eq!(ask(&core, "claude", &ws, "grok", Some("the release plan"), false), release);
+    assert_eq!(ask(&core, "claude", &ws, "grok", Some("Release Plan!"), false), release);
+
+    // No topic: continue where this pair last talked (the release session).
+    assert_eq!(ask(&core, "claude", &ws, "grok", None, false), release);
+
+    // Another agent on the same topic joins the same conversation.
+    assert_eq!(ask(&core, "cursor", &ws, "grok", Some("release plan"), false), release);
+
+    // A topic that only shares a word is not the same topic.
+    let notes = ask(&core, "claude", &ws, "grok", Some("release notes"), false);
+    assert_ne!(notes, release);
+
+    // Asked for explicitly: a fresh session, even on an existing topic.
+    let fresh = ask(&core, "claude", &ws, "grok", Some("Release plan"), true);
+    assert_ne!(fresh, release);
+
+    // Renaming a session renames its topic too.
+    core.vault.rename_session(&qa, "Quality checks").unwrap();
+    assert_eq!(ask(&core, "claude", &ws, "grok", Some("quality checks"), false), qa);
+
+    // Rooms can be named and addressed by name.
+    let room = core.vault.session_room(&qa).unwrap().unwrap();
+    core.vault.rename_room(&room, "AgentMux Discussion").unwrap();
+    assert_eq!(core.vault.find_room("agentmux discussion").unwrap().as_deref(), Some(room.as_str()));
+    let t = core.start_ticket(&ctx("claude", &ws), Some("AgentMux Discussion"), "grok", "by name", None).unwrap();
+    assert_eq!(core.vault.ticket(&t).unwrap().unwrap()["roomId"], room.as_str());
+    core.finish(&t, "answered", "ok", None).unwrap();
+
+    // mux_sessions lists them by name with who took part.
+    let list = core.vault.session_list(&room).unwrap();
+    let names: Vec<&str> = list.iter().map(|x| x["name"].as_str().unwrap()).collect();
+    for n in ["Release plan", "Quality checks", "release notes"] {
+        assert!(names.contains(&n), "{names:?}");
+    }
+    assert!(list.iter().any(|x| x["participants"].as_array().unwrap().iter().any(|p| p == "cursor")));
+}
+
+#[test]
+fn topic_matching() {
+    use agentmux_core::vault::{topic_key, topics_match};
+    assert_eq!(topic_key("The Release-Plan!"), "release plan");
+    assert_eq!(topic_key("Session #3 · Release plan"), "release plan");
+    assert!(topics_match("release plan", "release plan"));
+    assert!(topics_match("release", "release plan"));
+    assert!(!topics_match("release notes", "release plan"));
+    assert!(!topics_match("", "release plan"));
 }

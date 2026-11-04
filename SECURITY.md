@@ -29,7 +29,7 @@ There is no telemetry and no account.
 - **Loop protection:** at most 3 hops per chain of asks, and one open question per pair of agents.
 - **Remote (tunnel) callers:**
   - every Grok bot has its own bearer token, compared in constant time;
-  - a token can list and answer that bot's own questions (`mux_whoami`, `mux_contacts`, `mux_register`, `mux_inbox`, `mux_reply`, `mux_updates`). By default it can also start conversations (`mux_ask_peer`, `mux_get_reply`), limited to 30 new questions an hour; switch that off per bot under **Let this bot start conversations**. It can never read room context or choose a room or session, so nothing from your repos' git diffs or notes rides along, and woken agents stay read-only;
+  - a token can list and answer that bot's own questions (`mux_whoami`, `mux_contacts`, `mux_register`, `mux_inbox`, `mux_reply`, `mux_updates`, and `mux_sessions` for its own room). By default it can also start conversations (`mux_ask_peer`, `mux_get_reply`), limited to 30 new questions an hour; switch that off per bot under **Let this bot start conversations**. It can never read room context or choose a room or session, so nothing from your repos' git diffs or notes rides along, and woken agents stay read-only;
   - the `Host` header must match the active tunnel, and requests and bad tokens are rate-limited;
   - tunnels are off by default and stop when you quit from the tray.
 - **Claude Code hook:** with the hook on, Claude Code runs `~/.agentmux/bin/agentmux hook claude-code` on each prompt. It only reads the local vault and prints Claude's own unread updates. It stays silent inside AgentMux's own headless runs, and it edits only its own entries in `~/.claude/settings.json` (a backup is kept).

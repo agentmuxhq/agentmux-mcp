@@ -8,6 +8,15 @@ use std::time::{Duration, Instant};
 use tokio::sync::{broadcast, Notify};
 
 /// Who is calling: set once per connection from the shim's hello line.
+/// How a question chooses its session (see `Core::pick_session`).
+#[derive(Clone, Debug, Default)]
+pub struct AskOpts {
+    /// What the conversation is about, e.g. "release plan". Same topic → same session.
+    pub topic: Option<String>,
+    /// Start a fresh session even if one on this topic exists.
+    pub new_session: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct CallerCtx {
     pub agent: String,
@@ -89,9 +98,9 @@ impl Core {
     /// Room + latest session for an explicit room id, or for the caller's workspace.
     pub fn resolve_room(&self, ctx: &CallerCtx, explicit: Option<&str>) -> Result<(String, String)> {
         if let Some(r) = explicit.filter(|r| !r.is_empty()) {
-            if self.vault.room(r)?.is_some() {
-                let sess = self.vault.latest_session(r)?.ok_or_else(|| anyhow!("room {r} has no session"))?;
-                return Ok((r.to_string(), sess));
+            if let Some(id) = self.vault.find_room(r)? {
+                let sess = self.vault.latest_session(&id)?.ok_or_else(|| anyhow!("room {r} has no session"))?;
+                return Ok((id, sess));
             }
             bail!("unknown room '{r}' (see mux_list_rooms)");
         }
@@ -116,20 +125,37 @@ impl Core {
         self.start_ticket_in(ctx, room_hint, None, to, question, then)
     }
 
-    /// Which session a new question belongs to. A session is one conversation: the latest one is
-    /// reused only if it is still empty or the same two agents talked there recently; otherwise a
-    /// fresh session starts, so unrelated exchanges in the same workspace don't pile together.
-    fn pick_session(&self, room: &str, latest: &str, from: &str, to: &str) -> Result<String> {
-        if self.vault.session_message_count(latest)? == 0 {
-            return Ok(latest.to_string());
-        }
-        let since = (chrono::Utc::now() - chrono::Duration::minutes(config::SESSION_CONTINUE_MINUTES)).to_rfc3339();
-        if self.vault.pair_active_since(latest, from, to, &since)? {
-            return Ok(latest.to_string());
-        }
+    /// Which session a new question belongs to. A session is one topic of conversation, reused
+    /// until someone asks for a new one:
+    ///  1. `new_session`: always a fresh session (named after the topic, if given);
+    ///  2. a `topic`: the room's session on that topic, or a new one named after it;
+    ///  3. otherwise the latest session if it is still empty (the UI's "New session");
+    ///  4. otherwise the session where these two agents last talked, however long ago;
+    ///  5. otherwise a new session for this pair.
+    fn pick_session(&self, room: &str, latest: &str, from: &str, to: &str, opts: &AskOpts) -> Result<String> {
         let who = |id: &str| if id == "user" { "You".to_string() } else { self.vault.agent_name(id) };
-        let title = format!("{} ↔ {}", who(from), who(to));
-        self.vault.new_session(room, &title)
+        let topic = opts.topic.as_deref().map(str::trim).filter(|t| !t.is_empty());
+        if opts.new_session {
+            return self.vault.new_session(room, topic.unwrap_or(&format!("{} ↔ {}", who(from), who(to))));
+        }
+        let latest_empty = self.vault.session_message_count(latest)? == 0;
+        if let Some(t) = topic {
+            if let Some(s) = self.vault.session_for_topic(room, t)? {
+                return Ok(s);
+            }
+            if latest_empty {
+                self.vault.set_session_topic_if_unnamed(latest, t)?;
+                return Ok(latest.to_string());
+            }
+            return self.vault.new_session(room, t);
+        }
+        if latest_empty {
+            return Ok(latest.to_string());
+        }
+        if let Some(s) = self.vault.last_pair_session(room, from, to)? {
+            return Ok(s);
+        }
+        self.vault.new_session(room, &format!("{} ↔ {}", who(from), who(to)))
     }
 
     /// `start_ticket` with an explicit session to continue (the UI's open session, a handoff chain).
@@ -141,6 +167,21 @@ impl Core {
         to: &str,
         question: &str,
         then: Option<String>,
+    ) -> Result<String> {
+        self.start_ticket_with(ctx, room_hint, session_hint, to, question, then, &AskOpts::default())
+    }
+
+    /// `start_ticket_in` with a topic / new-session choice (see `pick_session`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn start_ticket_with(
+        self: &Arc<Self>,
+        ctx: &CallerCtx,
+        room_hint: Option<&str>,
+        session_hint: Option<&str>,
+        to: &str,
+        question: &str,
+        then: Option<String>,
+        opts: &AskOpts,
     ) -> Result<String> {
         // The wake runs as a background task, so this must be called inside the async runtime. Checking
         // first means a caller outside it gets an error instead of a ticket that is never woken.
@@ -175,7 +216,7 @@ impl Core {
         let sess = match (session_hint.filter(|s| !s.is_empty()), session_room) {
             (Some(s), Some(r)) if r == room => s.to_string(),
             (Some(s), _) => bail!("session '{s}' is not in room '{room}'"),
-            _ => self.pick_session(&room, &latest, &ctx.agent, to)?,
+            _ => self.pick_session(&room, &latest, &ctx.agent, to, opts)?,
         };
         self.vault.add_member(&room, to)?;
 

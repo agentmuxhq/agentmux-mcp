@@ -228,6 +228,23 @@ fn new_session(state: State<'_, AppState>, room: String, title: String) -> Resul
     Ok(id)
 }
 
+/// Rename a room (its display name; the id and folder binding stay).
+#[tauri::command]
+fn rename_room(state: State<'_, AppState>, room: String, title: String) -> Result<(), String> {
+    state.core.vault.rename_room(&room, &title).map_err(err)?;
+    state.core.emit("room", json!({"id": room}));
+    Ok(())
+}
+
+/// Rename a session. The name doubles as its topic, so agents asking about it land there.
+#[tauri::command]
+fn rename_session(state: State<'_, AppState>, session: String, title: String) -> Result<(), String> {
+    let room = state.core.vault.session_room(&session).map_err(err)?;
+    state.core.vault.rename_session(&session, &title).map_err(err)?;
+    state.core.emit("room", json!({"id": room}));
+    Ok(())
+}
+
 #[tauri::command]
 fn set_context(state: State<'_, AppState>, room: String, kind: String, content: String) -> Result<(), String> {
     if !matches!(kind.as_str(), "notes" | "terminal" | "diff") {
@@ -819,6 +836,8 @@ pub fn run() {
             ping_provider,
             create_room,
             new_session,
+            rename_room,
+            rename_session,
             set_context,
             refresh_git,
             set_allow_edits,

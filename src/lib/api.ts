@@ -210,6 +210,8 @@ export const api = {
   setBotCanAsk: (id: string, on: boolean) => call<void>("set_bot_can_ask", { id, on }),
   renameAgent: (id: string, name: string, description?: string) => call<void>("rename_agent", { id, name, description: description ?? null }),
   newSession: (room: string, title: string) => call<string>("new_session", { room, title }),
+  renameRoom: (room: string, title: string) => call<void>("rename_room", { room, title }),
+  renameSession: (session: string, title: string) => call<void>("rename_session", { session, title }),
   setContext: (room: string, kind: "notes" | "terminal" | "diff", content: string) =>
     call<void>("set_context", { room, kind, content }),
   refreshGit: (room: string) => call<void>("refresh_git", { room }),

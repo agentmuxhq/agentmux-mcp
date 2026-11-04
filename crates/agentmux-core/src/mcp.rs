@@ -9,7 +9,9 @@ const INSTRUCTIONS: &str = "AgentMux connects your AI tools (Cursor, Grok, Claud
 Use mux_contacts to see who is reachable, mux_ask_peer to ask another agent a question (it returns their reply), \
 mux_inbox/mux_reply to answer questions addressed to you, and mux_read_context / mux_publish_context for shared git diff, terminal output and notes. \
 If mux_ask_peer comes back pending, keep calling mux_get_reply (it waits up to 110 s each time) until it is answered, unless the user asks you to stop. \
-At the start of a turn, call mux_updates if you may be waiting on another agent: it lists replies and questions that arrived since you last checked.";
+At the start of a turn, call mux_updates if you may be waiting on another agent: it lists replies and questions that arrived since you last checked. \
+Conversations are grouped into sessions by topic: pass a short `topic` to mux_ask_peer (for example \"release plan\" or \"QA\"), \
+reuse the same wording to continue that conversation later (mux_sessions lists the room's topics), and set new_session only when the user asks for a fresh one.";
 
 fn tool(name: &str, desc: &str, props: Value, required: &[&str]) -> Value {
     json!({"name": name, "description": desc,
@@ -42,7 +44,9 @@ pub fn tools() -> Vec<Value> {
                 "question": {"type": "string"},
                 "room": room,
                 "wait_s": {"type": "integer", "description": "Seconds to wait for the reply (default 50, max 110)"},
-                "session": {"type": "string", "description": "Continue this session. By default a new session starts unless you asked this agent something in the last 30 minutes"},
+                "topic": {"type": "string", "description": "Short name of what this conversation is about, e.g. \"release plan\" or \"QA\". Questions on the same topic go to the same session, even days later; a new topic gets its own session. Reuse names from mux_sessions"},
+                "new_session": {"type": "boolean", "description": "Start a fresh session even if one on this topic exists. Only when the user asks for a new one"},
+                "session": {"type": "string", "description": "Continue this exact session id. Without topic or session, you continue the session where you last talked with this agent"},
                 "then": {"type": "string", "description": "Optionally forward the answer to this agent next"}
             }),
             &["to", "question"],
@@ -63,6 +67,12 @@ pub fn tools() -> Vec<Value> {
             "mux_updates",
             "What's new for you since you last checked: answers to your questions (including late ones) and new questions addressed to you.",
             json!({"mark_read": {"type": "boolean", "description": "Advance your read cursor (default true)"}}),
+            &[],
+        ),
+        tool(
+            "mux_sessions",
+            "List the room's sessions (topics of conversation) with their last activity and participants, to pick a topic for mux_ask_peer.",
+            json!({"room": room}),
             &[],
         ),
         tool("mux_inbox", "List questions other agents have asked you that are still unanswered.", json!({}), &[]),
@@ -197,7 +207,11 @@ async fn call_tool(core: &Arc<Core>, ctx: &CallerCtx, name: &str, a: &Value) -> 
                 bail!("question is required");
             }
             let wait = a.get("wait_s").and_then(|v| v.as_u64()).unwrap_or(50);
-            let ticket = core.start_ticket_in(ctx, arg_str(a, "room"), arg_str(a, "session"), to, q, arg_str(a, "then").map(String::from))?;
+            let opts = crate::core::AskOpts {
+                topic: arg_str(a, "topic").map(String::from),
+                new_session: a.get("new_session").and_then(|v| v.as_bool()).unwrap_or(false),
+            };
+            let ticket = core.start_ticket_with(ctx, arg_str(a, "room"), arg_str(a, "session"), to, q, arg_str(a, "then").map(String::from), &opts)?;
             let t = core.wait_ticket(&ticket, wait).await?;
             Ok(ticket_view(&t))
         }
@@ -216,6 +230,11 @@ async fn call_tool(core: &Arc<Core>, ctx: &CallerCtx, name: &str, a: &Value) -> 
             Ok(json!({"registered": true, "agent": ctx.agent, "name": core.vault.agent_name(&ctx.agent)}))
         }
         "mux_inbox" => Ok(json!(core.vault.inbox(&ctx.agent)?)),
+        "mux_sessions" => {
+            let (room, _) = core.resolve_room(ctx, arg_str(a, "room"))?;
+            let title = core.vault.room(&room)?.map(|r| r["title"].clone()).unwrap_or(json!(room));
+            Ok(json!({"room": room, "roomName": title, "sessions": core.vault.session_list(&room)?}))
+        }
         "mux_updates" => {
             let mark = a.get("mark_read").and_then(|v| v.as_bool()).unwrap_or(true);
             let items = core.vault.updates_for(&ctx.agent, mark)?;

@@ -25,8 +25,15 @@ MCP is pull-only: a tool runs only when the agent decides to call it, so one age
 
 ## Rooms and sessions
 
-- A **room** is one workspace (git repo or folder). Agents asking from the same folder share it, along with the room's shared context: git diff, terminal output and notes.
-- A **session** is one conversation in a room. A new pair of agents gets a new session, unless the same pair talked in the last 30 minutes. Handoffs (`then`) stay in the same session.
+- A **room** is a long-lived space, by default one per workspace (git repo or folder). Agents asking from the same folder share it, along with its shared context: git diff, terminal output and notes. Give it a real name by double-clicking it in the app (for example "AgentMux Discussion"). Agents can address a room by id or by name.
+- A **session** is one *topic* of conversation in a room: "Release plan", "QA", "Docs". It is reused until someone asks for a new one:
+  1. `new_session: true` (or **New session** in the app): always a fresh session;
+  2. a `topic` on `mux_ask_peer`: the room's session on that topic, or a new one named after it. Wording doesn't matter much ("the release plan" = "Release plan"), but "release notes" is a different topic from "release plan";
+  3. no topic: the session where the same two agents last talked, however long ago;
+  4. otherwise a new session for that pair.
+
+  So asking Grok about QA from a release-plan conversation opens "QA", and coming back to the release plan returns to "Release plan" with its history. Another agent asking about the same topic joins the same session. Renaming a session renames its topic too.
+- Cloud bots (Grok) have no folder, so their own questions go to a neutral room, **Cloud bots**: no workspace diff or notes reach them, and they can't write into your rooms. Answers to questions *you* ask them land in your session as usual.
 - Everything is stored in `~/.agentmux/vault.db` and mirrored as Markdown in `~/.agentmux/threads/`.
 
 ## Tickets
@@ -74,6 +81,7 @@ A reply reaches the asking chat in three ways:
 | `mux_contacts` | Who you can reach, whether they're connected, how they're woken |
 | `mux_ask_peer` | Ask another agent; returns the answer or a pending ticket |
 | `mux_get_reply` | Fetch or wait for a ticket's answer |
+| `mux_sessions` | The room's sessions (topics), with last activity and participants |
 | `mux_updates` | What's new for you since you last checked |
 | `mux_inbox` / `mux_reply` | Questions addressed to you, and answering them |
 | `mux_register` | Set your display name and a one-line description |

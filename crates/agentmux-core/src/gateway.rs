@@ -33,7 +33,7 @@ fn token_secret(agent: &str) -> String {
     }
 }
 /// Tools a remote (tunnelled) caller may use.
-pub const REMOTE_TOOLS: &[&str] = &["mux_whoami", "mux_contacts", "mux_register", "mux_inbox", "mux_reply", "mux_updates"];
+pub const REMOTE_TOOLS: &[&str] = &["mux_whoami", "mux_contacts", "mux_register", "mux_inbox", "mux_reply", "mux_updates", "mux_sessions"];
 /// Added for a bot that has been switched on to start conversations.
 pub const ASK_TOOLS: &[&str] = &["mux_ask_peer", "mux_get_reply"];
 /// Per bot: at most this many new questions to other agents per hour.
@@ -1138,6 +1138,12 @@ async fn mcp_post(State(g): State<Arc<Gateway>>, headers: HeaderMap, body: Bytes
         let g = g.clone();
         let (ctx, tools, agent) = (ctx.clone(), tools.clone(), agent.clone());
         async move {
+            // Listing sessions stays in the bot's own neutral room: no peeking at a workspace's topics.
+            if item["method"] == "tools/call" && item["params"]["name"] == "mux_sessions" {
+                if let Some(a) = item["params"]["arguments"].as_object_mut() {
+                    a.remove("room");
+                }
+            }
             if item["method"] == "tools/call" && item["params"]["name"] == "mux_ask_peer" && tools.contains(&"mux_ask_peer") {
                 // A remote bot can't pick a room or session: its questions go to the neutral home
                 // room, so no workspace diff or notes ride along, and it can't write into someone's thread.

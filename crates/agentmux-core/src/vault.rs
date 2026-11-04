@@ -278,10 +278,12 @@ impl Vault {
     /// Find or create the room for a workspace; returns (room_id, session_id).
     pub fn ensure_room(&self, workspace: &str, branch: &str) -> Result<(String, String)> {
         let slug = slugify(workspace);
-        let title = Path::new(workspace)
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| workspace.to_string());
+        // Cloud bots have no folder; their questions use the AgentMux home as a neutral room.
+        let title = if Path::new(workspace) == config::home() {
+            "Cloud bots".to_string()
+        } else {
+            Path::new(workspace).file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| workspace.to_string())
+        };
         let c = self.conn.lock().unwrap();
         c.execute(
             "INSERT OR IGNORE INTO rooms(id, title, kind, workspace_path, branch, updated_at) VALUES(?1, ?2, 'group', ?3, ?4, ?5)",
@@ -330,20 +332,119 @@ impl Vault {
         Ok(())
     }
 
+    /// A new session. A non-empty `title` names it (and, as a topic, routes later questions on the
+    /// same topic to it); otherwise it is "Session #N".
     pub fn new_session(&self, room: &str, title: &str) -> Result<String> {
         let c = self.conn.lock().unwrap();
         let n: i64 = c.query_row("SELECT COUNT(*) FROM sessions WHERE room_id = ?1", params![room], |r| r.get(0))?;
         let sid = new_id("sess");
-        let title = if title.trim().is_empty() {
-            format!("Session #{}", n + 1)
-        } else {
-            format!("Session #{} · {}", n + 1, title.trim())
+        let (title, topic) = match clean_title(title) {
+            Some(t) => (t.clone(), Some(topic_key(&t))),
+            None => (format!("Session #{}", n + 1), None),
         };
         c.execute(
-            "INSERT INTO sessions(id, room_id, title, status, started_at) VALUES(?1, ?2, ?3, 'Active', ?4)",
-            params![sid, room, title, now()],
+            "INSERT INTO sessions(id, room_id, title, status, started_at, topic) VALUES(?1, ?2, ?3, 'Active', ?4, ?5)",
+            params![sid, room, title, now(), topic],
         )?;
         Ok(sid)
+    }
+
+    /// Rename a session. The new name is also its topic, so later questions using it land here.
+    pub fn rename_session(&self, session: &str, title: &str) -> Result<()> {
+        let t = clean_title(title).ok_or_else(|| anyhow::anyhow!("a session needs a name"))?;
+        let n = self.conn.lock().unwrap().execute(
+            "UPDATE sessions SET title = ?2, topic = ?3 WHERE id = ?1",
+            params![session, t, topic_key(&t)],
+        )?;
+        if n == 0 {
+            anyhow::bail!("unknown session '{session}'");
+        }
+        Ok(())
+    }
+
+    pub fn rename_room(&self, room: &str, title: &str) -> Result<()> {
+        let t = clean_title(title).ok_or_else(|| anyhow::anyhow!("a room needs a name"))?;
+        let n = self.conn.lock().unwrap().execute("UPDATE rooms SET title = ?2 WHERE id = ?1", params![room, t])?;
+        if n == 0 {
+            anyhow::bail!("unknown room '{room}'");
+        }
+        Ok(())
+    }
+
+    /// A room by id or, case-insensitively, by its name.
+    pub fn find_room(&self, id_or_name: &str) -> Result<Option<String>> {
+        let c = self.conn.lock().unwrap();
+        Ok(c.query_row(
+            "SELECT id FROM rooms WHERE id = ?1 OR lower(title) = lower(?1) ORDER BY id = ?1 DESC, updated_at DESC LIMIT 1",
+            params![id_or_name.trim()],
+            |r| r.get(0),
+        )
+        .optional()?)
+    }
+
+    /// The room's session whose topic or name matches `topic`, most recently active first.
+    pub fn session_for_topic(&self, room: &str, topic: &str) -> Result<Option<String>> {
+        let want = topic_key(topic);
+        if want.is_empty() {
+            return Ok(None);
+        }
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare(
+            "SELECT s.id, s.title, s.topic FROM sessions s WHERE s.room_id = ?1
+             ORDER BY COALESCE((SELECT MAX(created_at) FROM messages m WHERE m.session_id = s.id), s.started_at) DESC",
+        )?;
+        let rows: Vec<(String, String, Option<String>)> =
+            st.query_map(params![room], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<std::result::Result<_, _>>()?;
+        Ok(rows.into_iter().find(|(_, title, t)| topics_match(&want, t.as_deref().unwrap_or(&topic_key(title)))).map(|(id, ..)| id))
+    }
+
+    /// Give an unnamed session a topic (the first question that names one).
+    pub fn set_session_topic_if_unnamed(&self, session: &str, topic: &str) -> Result<()> {
+        if let Some(t) = clean_title(topic) {
+            self.conn.lock().unwrap().execute(
+                "UPDATE sessions SET title = ?2, topic = ?3 WHERE id = ?1 AND topic IS NULL AND title LIKE 'Session #%'",
+                params![session, t, topic_key(&t)],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// The session in this room where `a` and `b` last talked, however long ago.
+    pub fn last_pair_session(&self, room: &str, a: &str, b: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT session_id FROM tickets WHERE room_id = ?1
+                   AND ((sender = ?2 AND recipient = ?3) OR (sender = ?3 AND recipient = ?2))
+                 ORDER BY created_at DESC LIMIT 1",
+                params![room, a, b],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// The room's sessions for an agent choosing where to talk: name, activity and who took part.
+    pub fn session_list(&self, room: &str) -> Result<Vec<Value>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare(
+            "SELECT s.id, s.title, s.started_at,
+                    (SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id),
+                    (SELECT MAX(created_at) FROM messages m WHERE m.session_id = s.id),
+                    (SELECT group_concat(DISTINCT sender) FROM messages m WHERE m.session_id = s.id)
+             FROM sessions s WHERE s.room_id = ?1",
+        )?;
+        let mut rows: Vec<Value> = st
+            .query_map(params![room], |r| {
+                let who: Option<String> = r.get(5)?;
+                Ok(json!({"session": r.get::<_, String>(0)?, "name": r.get::<_, String>(1)?,
+                          "messages": r.get::<_, i64>(3)?, "lastActivity": r.get::<_, Option<String>>(4)?.unwrap_or(r.get::<_, String>(2)?),
+                          "participants": who.map(|w| w.split(',').map(String::from).collect::<Vec<_>>()).unwrap_or_default()}))
+            })?
+            .collect::<std::result::Result<_, _>>()?;
+        rows.sort_by(|a, b| b["lastActivity"].as_str().cmp(&a["lastActivity"].as_str()));
+        Ok(rows)
     }
 
     pub fn session_room(&self, session: &str) -> Result<Option<String>> {
@@ -357,17 +458,6 @@ impl Vault {
 
     pub fn session_message_count(&self, session: &str) -> Result<i64> {
         Ok(self.conn.lock().unwrap().query_row("SELECT COUNT(*) FROM messages WHERE session_id = ?1", params![session], |r| r.get(0))?)
-    }
-
-    /// Have `a` and `b` asked each other anything in this session since `since` (RFC 3339)?
-    pub fn pair_active_since(&self, session: &str, a: &str, b: &str, since: &str) -> Result<bool> {
-        let n: i64 = self.conn.lock().unwrap().query_row(
-            "SELECT COUNT(*) FROM tickets WHERE session_id = ?1 AND created_at >= ?4
-               AND ((sender = ?2 AND recipient = ?3) OR (sender = ?3 AND recipient = ?2))",
-            params![session, a, b, since],
-            |r| r.get(0),
-        )?;
-        Ok(n > 0)
     }
 
     pub fn room(&self, room: &str) -> Result<Option<Value>> {
@@ -390,11 +480,12 @@ impl Vault {
         let mut st = c.prepare("SELECT provider_id FROM room_members WHERE room_id = ?1 ORDER BY rowid")?;
         let members: Vec<String> = st.query_map(params![room], |r| r.get(0))?.collect::<std::result::Result<_, _>>()?;
         base["participants"] = json!(members);
-        let mut st = c.prepare("SELECT id, title, status, started_at FROM sessions WHERE room_id = ?1 ORDER BY started_at DESC")?;
+        let mut st = c.prepare("SELECT id, title, status, started_at, topic FROM sessions WHERE room_id = ?1 ORDER BY started_at DESC")?;
         let sessions: Vec<Value> = st
             .query_map(params![room], |r| {
                 Ok(json!({"id": r.get::<_, String>(0)?, "title": r.get::<_, String>(1)?,
-                          "status": r.get::<_, String>(2)?, "startedAt": r.get::<_, String>(3)?}))
+                          "status": r.get::<_, String>(2)?, "startedAt": r.get::<_, String>(3)?,
+                          "topic": r.get::<_, Option<String>>(4)?}))
             })?
             .collect::<std::result::Result<_, _>>()?;
         base["sessions"] = json!(sessions);
@@ -894,6 +985,15 @@ fn migrate(conn: &Connection) -> Result<()> {
             conn.execute(ddl, [])?;
         }
     }
+    let scols: Vec<String> = conn
+        .prepare("PRAGMA table_info(sessions)")?
+        .query_map([], |r| r.get::<_, String>(1))?
+        .collect::<std::result::Result<_, _>>()?;
+    if !scols.iter().any(|c| c == "topic") {
+        // What the session is about, normalized (see `topic_key`), so a later question on the same
+        // topic lands in it.
+        conn.execute("ALTER TABLE sessions ADD COLUMN topic TEXT", [])?;
+    }
     conn.execute("UPDATE providers SET family = CASE WHEN id = 'grok' OR id LIKE 'grok:%' THEN 'grok' ELSE id END WHERE family IS NULL", [])?;
     Ok(())
 }
@@ -920,4 +1020,37 @@ fn slugify(path: &str) -> String {
         h = h.wrapping_mul(1099511628211);
     }
     format!("{}-{:06x}", base.trim_matches('-'), h & 0xffffff)
+}
+
+/// A user-facing name: trimmed, single-spaced, at most 60 characters. None if empty.
+fn clean_title(s: &str) -> Option<String> {
+    let t = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let t: String = t.chars().take(60).collect();
+    (!t.is_empty()).then_some(t)
+}
+
+const TOPIC_STOPWORDS: &[&str] = &["the", "a", "an", "of", "for", "on", "about", "and", "to", "in", "our", "my", "re"];
+
+/// A topic reduced to its words: lowercase, punctuation and filler words dropped, so "The
+/// release plan!" and "release plan" are the same topic. Session-number prefixes are ignored.
+pub fn topic_key(s: &str) -> String {
+    let lower = s.to_lowercase();
+    let lower = lower.strip_prefix("session #").map(|r| r.trim_start_matches(|c: char| c.is_ascii_digit() || c == ' ' || c == '·')).unwrap_or(&lower);
+    lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty() && !TOPIC_STOPWORDS.contains(w))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Same topic? Equal word sets, or one name's words all inside the other's ("release" matches
+/// "release plan"), but never on a single shared word between two longer names ("release plan"
+/// vs "release notes" are different topics).
+pub fn topics_match(a: &str, b: &str) -> bool {
+    let wa: std::collections::BTreeSet<&str> = a.split(' ').filter(|w| !w.is_empty()).collect();
+    let wb: std::collections::BTreeSet<&str> = b.split(' ').filter(|w| !w.is_empty()).collect();
+    if wa.is_empty() || wb.is_empty() {
+        return false;
+    }
+    wa == wb || wa.is_subset(&wb) || wb.is_subset(&wa)
 }
