@@ -70,6 +70,18 @@ pub fn tools() -> Vec<Value> {
             &[],
         ),
         tool(
+            "mux_use_room",
+            "File your current folder under a product room by name (creating it if needed). Questions you ask from this folder go there from now on. Use it when the user says which product this work belongs to.",
+            json!({"name": {"type": "string", "description": "The product/room name, e.g. Animation"}}),
+            &["name"],
+        ),
+        tool(
+            "mux_rename_room",
+            "Rename a room (a product). Everyone who took part is told the new name. Only when the user asks.",
+            json!({"name": {"type": "string"}, "room": room}),
+            &["name"],
+        ),
+        tool(
             "mux_sessions",
             "List the room's sessions (topics of conversation) with their last activity and participants, to pick a topic for mux_ask_peer.",
             json!({"room": room}),
@@ -175,7 +187,7 @@ async fn call_tool(core: &Arc<Core>, ctx: &CallerCtx, name: &str, a: &Value) -> 
             let mut rooms = vec![];
             for id in core.vault.room_ids()? {
                 if let Some(r) = core.vault.room(&id)? {
-                    rooms.push(json!({"id": r["id"], "title": r["title"], "workspace": r["workspacePath"],
+                    rooms.push(json!({"id": r["id"], "title": r["title"], "folders": r["folders"],
                                       "branch": r["branch"], "participants": r["participants"]}));
                 }
             }
@@ -207,13 +219,45 @@ async fn call_tool(core: &Arc<Core>, ctx: &CallerCtx, name: &str, a: &Value) -> 
                 bail!("question is required");
             }
             let wait = a.get("wait_s").and_then(|v| v.as_u64()).unwrap_or(50);
+            // A folder AgentMux has never seen gets its own room; tell the agent so it can ask the
+            // user which product it belongs to.
+            let root = crate::context::workspace_root(std::path::Path::new(&ctx.cwd));
+            let new_folder = arg_str(a, "room").is_none() && root != crate::config::home() && core.vault.folder_room(&root.to_string_lossy())?.is_none();
             let opts = crate::core::AskOpts {
                 topic: arg_str(a, "topic").map(String::from),
                 new_session: a.get("new_session").and_then(|v| v.as_bool()).unwrap_or(false),
             };
             let ticket = core.start_ticket_with(ctx, arg_str(a, "room"), arg_str(a, "session"), to, q, arg_str(a, "then").map(String::from), &opts)?;
             let t = core.wait_ticket(&ticket, wait).await?;
-            Ok(ticket_view(&t))
+            let mut view = ticket_view(&t);
+            if new_folder {
+                let rooms: Vec<String> = core
+                    .vault
+                    .room_ids()?
+                    .iter()
+                    .filter_map(|id| core.vault.room(id).ok().flatten())
+                    .filter(|r| r["id"] != t["roomId"])
+                    .filter_map(|r| r["title"].as_str().map(String::from))
+                    .take(12)
+                    .collect();
+                if !rooms.is_empty() {
+                    view["room_note"] = json!(format!(
+                        "This folder is new to AgentMux, so it got its own room. If it belongs to an existing product ({}), ask the user and call mux_use_room with that name.",
+                        rooms.join(", ")
+                    ));
+                }
+            }
+            Ok(view)
+        }
+        "mux_use_room" => {
+            let name = arg_str(a, "name").unwrap_or("");
+            let (room, created) = core.use_room(ctx, name)?;
+            Ok(json!({"room": room, "name": core.vault.room(&room)?.map(|r| r["title"].clone()), "created": created}))
+        }
+        "mux_rename_room" => {
+            let (room, _) = core.resolve_room(ctx, arg_str(a, "room"))?;
+            let name = core.rename_room(&room, arg_str(a, "name").unwrap_or(""), &ctx.agent)?;
+            Ok(json!({"room": room, "name": name}))
         }
         "mux_get_reply" => {
             let id = arg_str(a, "ticket").unwrap_or("");

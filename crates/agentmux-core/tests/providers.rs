@@ -23,7 +23,7 @@ fn fake_bin(dir: &PathBuf, name: &str) {
 #[test]
 fn registry_and_golden_wake_args() {
     let ids: Vec<String> = providers::builtin().iter().map(|p| p.info().id).collect();
-    assert_eq!(ids, ["cursor", "grok", "claude", "chatgpt"]);
+    assert_eq!(ids, ["cursor", "grok", "claude", "chatgpt", "gemini"]);
     for p in providers::builtin() {
         let i = p.info();
         assert!(!i.name.is_empty() && i.color.starts_with('#'), "{i:?}");
@@ -36,7 +36,7 @@ fn registry_and_golden_wake_args() {
     assert!(providers::get("claude").unwrap().caps().context_hook);
 
     let bins = tmp("bins");
-    for b in ["cursor-agent", "claude", "codex"] {
+    for b in ["cursor-agent", "claude", "codex", "gemini"] {
         fake_bin(&bins, b);
     }
     // SAFETY: this is the only test in this binary that touches the environment.
@@ -51,6 +51,8 @@ fn registry_and_golden_wake_args() {
     assert_eq!(args("claude", true).unwrap(), ["-p", "P", "--permission-mode", "acceptEdits"]);
     assert_eq!(args("chatgpt", false).unwrap(), ["exec", "-s", "read-only", "--skip-git-repo-check", "--ephemeral", "-C", "/ws", "P"]);
     assert_eq!(args("chatgpt", true).unwrap()[2], "workspace-write");
+    assert_eq!(args("gemini", false).unwrap(), ["-p", "P", "--approval-mode", "plan", "--output-format", "text"]);
+    assert_eq!(args("gemini", true).unwrap()[3], "auto_edit");
     assert!(args("grok", false).is_none(), "Grok is woken by webhook, not a CLI");
 }
 
@@ -122,4 +124,24 @@ wake = { binary = "aider", args = ["--message", "{prompt}", "--yes-always"], rea
     assert!(bad("{prompt}\", \"--yes", "{prompt}\", \"{home}\", \"--yes").contains("unknown placeholder"));
     assert!(bad("\"{prompt}\"", "\"hi\"").contains("{prompt}"));
     assert!(bad("json-merge", "shell").contains("unknown mcp.kind"));
+}
+
+#[test]
+fn gemini_registers_in_its_settings_without_touching_the_rest() {
+    let d = tmp("gemini");
+    let path = d.join("settings.json");
+    std::fs::write(&path, json!({"model": {"name": "gemini-3-pro"}, "mcpServers": {"pencil": {"command": "pencil"}}}).to_string()).unwrap();
+    // SAFETY: only this test reads AGENTMUX_GEMINI_SETTINGS.
+    unsafe { std::env::set_var("AGENTMUX_GEMINI_SETTINGS", &path) };
+    let p = providers::get("gemini").unwrap();
+    assert!(!p.configured());
+    p.install(&PathBuf::from("/Users/x/.agentmux/bin/agentmux")).unwrap();
+    assert!(p.configured());
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(v["mcpServers"]["agentmux"]["args"], json!(["mcp", "--agent", "gemini"]));
+    assert_eq!(v["mcpServers"]["pencil"]["command"], "pencil");
+    assert_eq!(v["model"]["name"], "gemini-3-pro");
+    p.uninstall().unwrap();
+    assert!(!p.configured());
+    assert!(v["mcpServers"]["pencil"].is_object());
 }

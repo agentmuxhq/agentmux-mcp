@@ -55,7 +55,7 @@ pub struct Wake {
     pub read_only_args: Vec<String>,
 }
 
-const BUILTIN_IDS: [&str; 4] = ["cursor", "grok", "claude", "chatgpt"];
+const BUILTIN_IDS: [&str; 5] = ["cursor", "grok", "claude", "chatgpt", "gemini"];
 const WAKE_PLACEHOLDERS: [&str; 3] = ["{prompt}", "{workspace}", "{ticket}"];
 
 pub fn dir() -> PathBuf {

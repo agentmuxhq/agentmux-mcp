@@ -375,8 +375,31 @@ export default function App() {
                 <GitBranch size={12} />
                 {room.branch || "no git"}
               </span>
+              {ov.rooms.length > 1 && (
+                <select
+                  className="ml-auto rounded-md border border-white/10 bg-black/40 px-2 py-1 text-xs text-zinc-400 outline-none hover:border-white/20"
+                  value=""
+                  title="Same product as another room? Merge this room into it: threads, messages and folders move over"
+                  onChange={async (e) => {
+                    const into = ov.rooms.find((r) => r.id === e.target.value);
+                    if (!into || !window.confirm(`Merge "${room.title}" into "${into.title}"?\n\nIts threads, messages and folders move to "${into.title}", and "${room.title}" disappears. Everyone in it is told.`)) return;
+                    await api.mergeRooms(room.id, into.id).catch((err) => setError(String(err)));
+                    setRoomId(into.id);
+                    refresh();
+                  }}
+                >
+                  <option value="">Merge into…</option>
+                  {ov.rooms
+                    .filter((r) => r.id !== room.id)
+                    .map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.title}
+                      </option>
+                    ))}
+                </select>
+              )}
               <button
-                className={`${btn} ml-auto`}
+                className={`${btn} ${ov.rooms.length > 1 ? "" : "ml-auto"}`}
                 onClick={async () => {
                   const name = window.prompt("What is this session about? (e.g. Release plan, QA). Agents asking about the same topic land here.", "");
                   if (name === null) return;

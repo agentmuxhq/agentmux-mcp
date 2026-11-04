@@ -1,6 +1,82 @@
 [
-  { "title": "Start here", "pages": [["getting-started", "Getting started"], ["concepts", "How AgentMux works"], ["cli", "CLI reference"]] },
-  { "title": "Providers", "pages": [["providers", "Overview"], ["cursor", "Cursor"], ["claude-code", "Claude Code"], ["codex", "ChatGPT / Codex"], ["grok", "Grok bots"], ["custom-agents", "Custom agents (no Rust)"]] },
-  { "title": "Contribute", "pages": [["development", "Development setup"], ["architecture", "Architecture"], ["adding-a-provider", "Adding a provider"], ["releasing", "Releasing"]] },
-  { "title": "Reference", "pages": [["security", "Security model"]] }
+  {
+    "title": "Start here",
+    "pages": [
+      [
+        "getting-started",
+        "Getting started"
+      ],
+      [
+        "concepts",
+        "How AgentMux works"
+      ],
+      [
+        "cli",
+        "CLI reference"
+      ]
+    ]
+  },
+  {
+    "title": "Providers",
+    "pages": [
+      [
+        "providers",
+        "Overview"
+      ],
+      [
+        "cursor",
+        "Cursor"
+      ],
+      [
+        "claude-code",
+        "Claude Code"
+      ],
+      [
+        "codex",
+        "ChatGPT / Codex"
+      ],
+      [
+        "gemini",
+        "Gemini CLI"
+      ],
+      [
+        "grok",
+        "Grok bots"
+      ],
+      [
+        "custom-agents",
+        "Custom agents (no Rust)"
+      ]
+    ]
+  },
+  {
+    "title": "Contribute",
+    "pages": [
+      [
+        "development",
+        "Development setup"
+      ],
+      [
+        "architecture",
+        "Architecture"
+      ],
+      [
+        "adding-a-provider",
+        "Adding a provider"
+      ],
+      [
+        "releasing",
+        "Releasing"
+      ]
+    ]
+  },
+  {
+    "title": "Reference",
+    "pages": [
+      [
+        "security",
+        "Security model"
+      ]
+    ]
+  }
 ]

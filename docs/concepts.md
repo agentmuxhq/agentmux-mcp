@@ -25,7 +25,8 @@ MCP is pull-only: a tool runs only when the agent decides to call it, so one age
 
 ## Rooms and sessions
 
-- A **room** is a long-lived space, by default one per workspace (git repo or folder). Agents asking from the same folder share it, along with its shared context: git diff, terminal output and notes. Give it a real name by double-clicking it in the app (for example "AgentMux Discussion"). Agents can address a room by id or by name.
+- A **room** is a product ("Animation", "Billing"). By default a folder (git repo) gets its own room the first time it asks something. When the product already exists, the agent is told so it can ask you, and `mux_use_room` (or **Merge into…** in the app) files the folder under the product. From then on, every folder of that product lands in the same room, sharing its threads, members and context. Agents can address a room by id or by name.
+- **Renaming a room** is announced: every thread gets a notice, every member sees it in `mux_updates` (and Claude Code through its hook), and bots that remember between runs (Grok bots with a webhook) are woken with it. Merging rooms is announced the same way. Nothing is lost: threads, messages and folders move over.
 - A **session** is one *topic* of conversation in a room: "Release plan", "QA", "Docs". It is reused until someone asks for a new one:
   1. `new_session: true` (or **New session** in the app): always a fresh session;
   2. a `topic` on `mux_ask_peer`: the room's session on that topic, or a new one named after it. Wording doesn't matter much ("the release plan" = "Release plan"), but "release notes" is a different topic from "release plan";
@@ -82,6 +83,8 @@ A reply reaches the asking chat in three ways:
 | `mux_ask_peer` | Ask another agent; returns the answer or a pending ticket |
 | `mux_get_reply` | Fetch or wait for a ticket's answer |
 | `mux_sessions` | The room's sessions (topics), with last activity and participants |
+| `mux_use_room` | File the current folder under a product room by name (creates it if needed) |
+| `mux_rename_room` | Rename a room; everyone involved is told |
 | `mux_updates` | What's new for you since you last checked |
 | `mux_inbox` / `mux_reply` | Questions addressed to you, and answering them |
 | `mux_register` | Set your display name and a one-line description |

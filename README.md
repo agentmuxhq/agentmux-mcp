@@ -120,7 +120,7 @@ Grok bots run in the cloud, so they reach AgentMux through a tunnel: `agentmux t
 
 ## Providers
 
-Each agent is a provider: one file in `crates/agentmux-core/src/providers/`. Cursor, Claude Code, ChatGPT/Codex and Grok bots are built in. Any CLI agent can be added with a [TOML manifest](docs/custom-agents.md) (`agentmux provider add my-agent.toml`), or in Rust ([guide](docs/adding-a-provider.md)). PRs for new providers are very welcome.
+Each agent is a provider: one file in `crates/agentmux-core/src/providers/`. Cursor, Claude Code, ChatGPT/Codex, Gemini CLI and Grok bots are built in. Any CLI agent can be added with a [TOML manifest](docs/custom-agents.md) (`agentmux provider add my-agent.toml`), or in Rust ([guide](docs/adding-a-provider.md)). PRs for new providers are very welcome.
 
 ## Limits
 

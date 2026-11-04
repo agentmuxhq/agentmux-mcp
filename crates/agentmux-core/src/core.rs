@@ -48,6 +48,83 @@ impl Core {
         let _ = self.events.send(json!({"kind": kind, "data": data}));
     }
 
+    // ───────── product rooms ─────────
+
+    /// Rename a room. Every thread gets a notice, every member gets one in mux_updates (and the
+    /// Claude Code hook), and members that keep memory between runs (webhook bots) are woken with it.
+    pub fn rename_room(self: &Arc<Self>, room: &str, title: &str, by: &str) -> Result<String> {
+        let (old, new) = self.vault.rename_room(room, title)?;
+        if old == new {
+            return Ok(new);
+        }
+        let who = if by == "user" { "You".to_string() } else { self.vault.agent_name(by) };
+        let text = format!("Room renamed: \"{old}\" is now \"{new}\" (by {who}). Use the new name when you refer to it.");
+        self.announce(room, &text, by)?;
+        Ok(new)
+    }
+
+    /// File the caller's folder under a product room, by name. Creates the room if it doesn't exist.
+    pub fn use_room(self: &Arc<Self>, ctx: &CallerCtx, name: &str) -> Result<(String, bool)> {
+        let root = context::workspace_root(Path::new(&ctx.cwd));
+        if root == config::home() {
+            bail!("this agent has no workspace folder to file under a room");
+        }
+        let (room, created) = match self.vault.find_room(name)? {
+            Some(r) => (r, false),
+            None => (self.vault.create_room(name)?, true),
+        };
+        self.vault.assign_folder(&root.to_string_lossy(), &room)?;
+        if self.vault.is_agent(&ctx.agent) {
+            self.vault.add_member(&room, &ctx.agent)?;
+        }
+        self.emit("room", json!({"id": room}));
+        Ok((room, created))
+    }
+
+    /// Merge room `from` into `into`, then tell everyone involved.
+    pub fn merge_rooms(self: &Arc<Self>, from: &str, into: &str, by: &str) -> Result<()> {
+        let name = |id: &str| self.vault.room(id).ok().flatten().and_then(|r| r["title"].as_str().map(String::from)).unwrap_or_else(|| id.to_string());
+        let (a, b) = (name(from), name(into));
+        self.vault.merge_room(from, into)?;
+        self.announce(into, &format!("Room \"{a}\" was merged into \"{b}\". Its threads and folders are here now."), by)?;
+        self.emit("room", json!({"id": into}));
+        Ok(())
+    }
+
+    /// Post `text` into every thread of a room, notify each member except `by`, and wake the
+    /// members that remember between runs (webhook bots; `rooms.wake_on_change`, on by default).
+    /// Headless CLI runs start fresh each time, so they get it on their next turn instead.
+    fn announce(self: &Arc<Self>, room: &str, text: &str, by: &str) -> Result<()> {
+        for sess in self.vault.session_ids(room)? {
+            let msg = self.vault.add_message(&sess, room, "agentmux", Some("all"), "system", text, None, None)?;
+            self.emit("message", msg);
+        }
+        let members: Vec<String> = self.vault.room_members(room)?.into_iter().filter(|m| m != by && m != "user").collect();
+        for m in &members {
+            self.vault.add_notice(m, room, text)?;
+        }
+        self.emit("room", json!({"id": room}));
+        let wake = self.vault.setting("rooms.wake_on_change").ok().flatten().as_deref() != Some("0");
+        let Ok(rt) = tokio::runtime::Handle::try_current() else { return Ok(()) };
+        if !wake {
+            return Ok(());
+        }
+        for m in members {
+            let kind = self.vault.providers()?.into_iter().find(|p| p["id"] == m.as_str()).and_then(|p| p["wakeKind"].as_str().map(String::from));
+            if kind.as_deref() != Some("webhook") {
+                continue;
+            }
+            let Ok((url, key)) = webhook::load(&self.vault, &m) else { continue };
+            let ctx = format!("agentmux_notice\nFor: @{m}\n\n{text}\n\nThis is a notice, not a question: no mux_reply is needed.\n");
+            rt.spawn(async move {
+                if let Err(e) = webhook::post(&url, &key, &ctx).await {
+                    tracing::warn!("could not notify @{m}: {e}");
+                }
+            });
+        }
+        Ok(())
+    }
+
     fn notifier(&self, ticket: &str) -> Arc<Notify> {
         self.notifiers.lock().unwrap().entry(ticket.to_string()).or_default().clone()
     }
@@ -220,15 +297,13 @@ impl Core {
         };
         self.vault.add_member(&room, to)?;
 
-        // Snapshot the live git state so the peer sees what the caller sees.
-        if let Some(r) = self.vault.room(&room)? {
-            let ws = r["workspacePath"].as_str().unwrap_or("");
-            let (branch, diff) = context::capture_git(Path::new(ws));
+        // Snapshot the asker's live git state so the peer sees what the caller sees. A product room
+        // can span several folders, so it's the caller's folder, not the room's first one.
+        let caller_ws = context::workspace_root(Path::new(&ctx.cwd));
+        if caller_ws != config::home() {
+            let (_, diff) = context::capture_git(&caller_ws);
             if !diff.is_empty() {
                 self.vault.set_context(&room, "diff", &diff)?;
-            }
-            if !branch.is_empty() {
-                self.vault.ensure_room(ws, &branch)?;
             }
         }
 

@@ -12,6 +12,7 @@ use std::sync::Arc;
 pub mod claude_code;
 pub mod codex;
 pub mod cursor;
+pub mod gemini;
 pub mod grok;
 pub mod manifest;
 
@@ -76,7 +77,7 @@ pub trait Provider: Send + Sync {
 }
 
 pub fn builtin() -> Vec<Arc<dyn Provider>> {
-    vec![Arc::new(cursor::Cursor), Arc::new(grok::Grok), Arc::new(claude_code::ClaudeCode), Arc::new(codex::Codex)]
+    vec![Arc::new(cursor::Cursor), Arc::new(grok::Grok), Arc::new(claude_code::ClaudeCode), Arc::new(codex::Codex), Arc::new(gemini::Gemini)]
 }
 
 /// Built-ins first, then manifests from `~/.agentmux/providers/`.

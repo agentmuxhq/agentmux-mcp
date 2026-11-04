@@ -166,6 +166,7 @@ pub fn hook_context(vault: &crate::Vault) -> Result<Option<String>> {
         let line = match (u["kind"].as_str(), u["status"].as_str()) {
             (Some("answer"), Some("answered")) => format!("- {who} answered your question \"{q}\" (ticket {t}): {}", clip(u["answer"].as_str().unwrap_or(""), 500)),
             (Some("answer"), _) => format!("- Your question to {who} \"{q}\" failed (ticket {t}): {}", clip(u["answer"].as_str().unwrap_or(""), 200)),
+            (Some("notice"), _) => format!("- Notice: {}", clip(u["question"].as_str().unwrap_or(""), 300)),
             _ => format!("- {who} asked you (ticket {t}): \"{q}\". Answer it with mux_reply."),
         };
         out.push_str(&line);

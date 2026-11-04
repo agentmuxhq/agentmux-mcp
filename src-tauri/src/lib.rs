@@ -231,9 +231,14 @@ fn new_session(state: State<'_, AppState>, room: String, title: String) -> Resul
 /// Rename a room (its display name; the id and folder binding stay).
 #[tauri::command]
 fn rename_room(state: State<'_, AppState>, room: String, title: String) -> Result<(), String> {
-    state.core.vault.rename_room(&room, &title).map_err(err)?;
-    state.core.emit("room", json!({"id": room}));
+    state.core.rename_room(&room, &title, "user").map_err(err)?;
     Ok(())
+}
+
+/// Fold one room into another (e.g. two folders that are the same product).
+#[tauri::command]
+fn merge_rooms(state: State<'_, AppState>, from: String, into: String) -> Result<(), String> {
+    state.core.merge_rooms(&from, &into, "user").map_err(err)
 }
 
 /// Rename a session. The name doubles as its topic, so agents asking about it land there.
@@ -837,6 +842,7 @@ pub fn run() {
             create_room,
             new_session,
             rename_room,
+            merge_rooms,
             rename_session,
             set_context,
             refresh_git,

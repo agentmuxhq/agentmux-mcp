@@ -22,6 +22,7 @@ const FALLBACK: CatalogEntry[] = [
   { id: "grok", name: "Grok Bot", color: "#D97736", hint: "MCP stdio · added in Grok Bot settings", multiInstance: true, remoteAccess: true, wake: "webhook", contextHook: false },
   { id: "claude", name: "Claude Code", color: "#10B981", hint: "MCP stdio · claude mcp add", multiInstance: false, remoteAccess: false, wake: "cli", contextHook: true },
   { id: "chatgpt", name: "ChatGPT", color: "#8B5CF6", hint: "MCP stdio · ~/.codex/config.toml", multiInstance: false, remoteAccess: false, wake: "cli", contextHook: false },
+  { id: "gemini", name: "Gemini CLI", color: "#4285F4", hint: "MCP stdio · ~/.gemini/settings.json", multiInstance: false, remoteAccess: false, wake: "cli", contextHook: false },
 ];
 
 let known: Provider[] = [];
@@ -211,6 +212,7 @@ export const api = {
   renameAgent: (id: string, name: string, description?: string) => call<void>("rename_agent", { id, name, description: description ?? null }),
   newSession: (room: string, title: string) => call<string>("new_session", { room, title }),
   renameRoom: (room: string, title: string) => call<void>("rename_room", { room, title }),
+  mergeRooms: (from: string, into: string) => call<void>("merge_rooms", { from, into }),
   renameSession: (session: string, title: string) => call<void>("rename_session", { session, title }),
   setContext: (room: string, kind: "notes" | "terminal" | "diff", content: string) =>
     call<void>("set_context", { room, kind, content }),

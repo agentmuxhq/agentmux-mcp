@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS tickets(
 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS context(
   room_id TEXT, kind TEXT, content TEXT, captured_at TEXT, PRIMARY KEY(room_id, kind));
+CREATE TABLE IF NOT EXISTS room_folders(path TEXT PRIMARY KEY, room_id TEXT);
+CREATE TABLE IF NOT EXISTS notices(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT, room_id TEXT, text TEXT, created_at TEXT);
 "#;
 
 /// Settings that travel with a sync. Webhook URLs, tokens and tunnel ids are deliberately absent:
@@ -277,6 +280,20 @@ impl Vault {
 
     /// Find or create the room for a workspace; returns (room_id, session_id).
     pub fn ensure_room(&self, workspace: &str, branch: &str) -> Result<(String, String)> {
+        // A folder assigned to a product room (`assign_folder`) goes there.
+        let mapped: Option<String> = self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT f.room_id FROM room_folders f JOIN rooms r ON r.id = f.room_id WHERE f.path = ?1", params![workspace], |r| r.get(0))
+            .optional()?;
+        if let Some(room) = mapped {
+            let sess = match self.latest_session(&room)? {
+                Some(s) => s,
+                None => self.new_session(&room, "")?,
+            };
+            return Ok((room, sess));
+        }
         let slug = slugify(workspace);
         // Cloud bots have no folder; their questions use the AgentMux home as a neutral room.
         let title = if Path::new(workspace) == config::home() {
@@ -290,6 +307,7 @@ impl Vault {
             params![slug, title, workspace, branch, now()],
         )?;
         c.execute("UPDATE rooms SET branch = ?2 WHERE id = ?1 AND ?2 != ''", params![slug, branch])?;
+        c.execute("INSERT OR IGNORE INTO room_folders(path, room_id) VALUES(?1, ?2)", params![workspace, slug])?;
         let sess: Option<String> = c
             .query_row(
                 "SELECT id FROM sessions WHERE room_id = ?1 ORDER BY started_at DESC LIMIT 1",
@@ -362,13 +380,107 @@ impl Vault {
         Ok(())
     }
 
-    pub fn rename_room(&self, room: &str, title: &str) -> Result<()> {
+    /// Rename a room. Returns (old name, new name). Names are unique, ignoring case.
+    pub fn rename_room(&self, room: &str, title: &str) -> Result<(String, String)> {
         let t = clean_title(title).ok_or_else(|| anyhow::anyhow!("a room needs a name"))?;
-        let n = self.conn.lock().unwrap().execute("UPDATE rooms SET title = ?2 WHERE id = ?1", params![room, t])?;
-        if n == 0 {
+        let c = self.conn.lock().unwrap();
+        let old: String = c
+            .query_row("SELECT title FROM rooms WHERE id = ?1", params![room], |r| r.get(0))
+            .optional()?
+            .ok_or_else(|| anyhow::anyhow!("unknown room '{room}'"))?;
+        let clash: Option<String> = c
+            .query_row("SELECT id FROM rooms WHERE lower(title) = lower(?1) AND id != ?2", params![t, room], |r| r.get(0))
+            .optional()?;
+        if clash.is_some() {
+            anyhow::bail!("a room called '{t}' already exists; merge into it instead");
+        }
+        c.execute("UPDATE rooms SET title = ?2 WHERE id = ?1", params![room, t])?;
+        Ok((old, t))
+    }
+
+    /// File a folder under a product room; questions asked from it go there from now on.
+    pub fn assign_folder(&self, path: &str, room: &str) -> Result<()> {
+        let c = self.conn.lock().unwrap();
+        let exists: Option<i64> = c.query_row("SELECT 1 FROM rooms WHERE id = ?1", params![room], |r| r.get(0)).optional()?;
+        if exists.is_none() {
             anyhow::bail!("unknown room '{room}'");
         }
+        c.execute(
+            "INSERT INTO room_folders(path, room_id) VALUES(?1, ?2) ON CONFLICT(path) DO UPDATE SET room_id = excluded.room_id",
+            params![path, room],
+        )?;
         Ok(())
+    }
+
+    /// A new, empty product room with a name (no folder yet). Returns its id.
+    pub fn create_room(&self, title: &str) -> Result<String> {
+        let t = clean_title(title).ok_or_else(|| anyhow::anyhow!("a room needs a name"))?;
+        if self.find_room(&t)?.is_some() {
+            anyhow::bail!("a room called '{t}' already exists");
+        }
+        let id = format!("{}-{}", slugify_name(&t), &new_id("r")[2..8]);
+        self.conn.lock().unwrap().execute(
+            "INSERT INTO rooms(id, title, kind, workspace_path, branch, updated_at) VALUES(?1, ?2, 'group', '', '', ?3)",
+            params![id, t, now()],
+        )?;
+        self.new_session(&id, "")?;
+        Ok(id)
+    }
+
+    /// Fold room `from` into `into`: sessions, messages, questions, members and folders move;
+    /// `from` is removed. Nothing is lost.
+    pub fn merge_room(&self, from: &str, into: &str) -> Result<()> {
+        if from == into {
+            anyhow::bail!("can't merge a room into itself");
+        }
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        for id in [from, into] {
+            if tx.query_row("SELECT 1 FROM rooms WHERE id = ?1", params![id], |r| r.get::<_, i64>(0)).optional()?.is_none() {
+                anyhow::bail!("unknown room '{id}'");
+            }
+        }
+        for table in ["sessions", "messages", "tickets", "notices"] {
+            tx.execute(&format!("UPDATE {table} SET room_id = ?2 WHERE room_id = ?1"), params![from, into])?;
+        }
+        tx.execute("INSERT OR IGNORE INTO room_members(room_id, provider_id) SELECT ?2, provider_id FROM room_members WHERE room_id = ?1", params![from, into])?;
+        tx.execute("DELETE FROM room_members WHERE room_id = ?1", params![from])?;
+        tx.execute("UPDATE room_folders SET room_id = ?2 WHERE room_id = ?1", params![from, into])?;
+        tx.execute("INSERT OR IGNORE INTO context(room_id, kind, content, captured_at) SELECT ?2, kind, content, captured_at FROM context WHERE room_id = ?1", params![from, into])?;
+        tx.execute("DELETE FROM context WHERE room_id = ?1", params![from])?;
+        tx.execute("DELETE FROM rooms WHERE id = ?1", params![from])?;
+        tx.execute("UPDATE rooms SET updated_at = ?2 WHERE id = ?1", params![into, now()])?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// A message for an agent about its room (renamed, merged): shown in mux_updates and the
+    /// Claude Code hook, once.
+    pub fn add_notice(&self, agent: &str, room: &str, text: &str) -> Result<()> {
+        self.conn.lock().unwrap().execute(
+            "INSERT INTO notices(agent, room_id, text, created_at) VALUES(?1, ?2, ?3, ?4)",
+            params![agent, room, text, now()],
+        )?;
+        Ok(())
+    }
+
+    /// Agents that took part in a room.
+    pub fn room_members(&self, room: &str) -> Result<Vec<String>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT provider_id FROM room_members WHERE room_id = ?1 ORDER BY rowid")?;
+        Ok(st.query_map(params![room], |r| r.get(0))?.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// The room's session ids.
+    pub fn session_ids(&self, room: &str) -> Result<Vec<String>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT id FROM sessions WHERE room_id = ?1 ORDER BY started_at")?;
+        Ok(st.query_map(params![room], |r| r.get(0))?.collect::<std::result::Result<_, _>>()?)
+    }
+
+    /// Was this folder already filed under a room?
+    pub fn folder_room(&self, path: &str) -> Result<Option<String>> {
+        Ok(self.conn.lock().unwrap().query_row("SELECT room_id FROM room_folders WHERE path = ?1", params![path], |r| r.get(0)).optional()?)
     }
 
     /// A room by id or, case-insensitively, by its name.
@@ -480,6 +592,9 @@ impl Vault {
         let mut st = c.prepare("SELECT provider_id FROM room_members WHERE room_id = ?1 ORDER BY rowid")?;
         let members: Vec<String> = st.query_map(params![room], |r| r.get(0))?.collect::<std::result::Result<_, _>>()?;
         base["participants"] = json!(members);
+        let mut st = c.prepare("SELECT path FROM room_folders WHERE room_id = ?1 ORDER BY path")?;
+        let folders: Vec<String> = st.query_map(params![room], |r| r.get(0))?.collect::<std::result::Result<_, _>>()?;
+        base["folders"] = json!(folders);
         let mut st = c.prepare("SELECT id, title, status, started_at, topic FROM sessions WHERE room_id = ?1 ORDER BY started_at DESC")?;
         let sessions: Vec<Value> = st
             .query_map(params![room], |r| {
@@ -674,6 +789,9 @@ impl Vault {
                  UNION ALL
                  SELECT id, 'question', sender, status, question, NULL, room_id, created_at FROM tickets
                    WHERE recipient = ?1 AND status IN ('pending','running') AND created_at > ?2
+                 UNION ALL
+                 SELECT 'N-' || id, 'notice', 'agentmux', 'notice', text, NULL, room_id, created_at FROM notices
+                   WHERE agent = ?1 AND created_at > ?2
                  ORDER BY 8 DESC LIMIT 20",
             )?;
             let rows = st.query_map(params![agent, since], |r| {
@@ -994,6 +1112,8 @@ fn migrate(conn: &Connection) -> Result<()> {
         // topic lands in it.
         conn.execute("ALTER TABLE sessions ADD COLUMN topic TEXT", [])?;
     }
+    // Every existing room's folder is already filed under it (rooms predating room_folders).
+    conn.execute("INSERT OR IGNORE INTO room_folders(path, room_id) SELECT workspace_path, id FROM rooms WHERE workspace_path != ''", [])?;
     conn.execute("UPDATE providers SET family = CASE WHEN id = 'grok' OR id LIKE 'grok:%' THEN 'grok' ELSE id END WHERE family IS NULL", [])?;
     Ok(())
 }
@@ -1053,4 +1173,11 @@ pub fn topics_match(a: &str, b: &str) -> bool {
         return false;
     }
     wa == wb || wa.is_subset(&wb) || wb.is_subset(&wa)
+}
+
+/// A room id stem from a name: lowercase letters, digits and dashes.
+fn slugify_name(name: &str) -> String {
+    let s: String = name.to_lowercase().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let s = s.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-");
+    if s.is_empty() { "room".into() } else { s.chars().take(40).collect() }
 }
