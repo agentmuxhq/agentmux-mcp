@@ -9,7 +9,7 @@ Every command is `agentmux <command>`. Run `agentmux --help` or `agentmux <comma
 | `status` | Daemon, tunnel, agents and sync at a glance |
 | `connect <agent\|all> [--no-hook]` | Register AgentMux as an MCP server in an agent. `--no-hook` skips Claude Code's context hook |
 | `disconnect <agent\|all>` | Remove it again (and Claude Code's hook) |
-| `hook claude-code [--on\|--off]` | With no flag, this is what Claude Code runs on each prompt. `--on` / `--off` add or remove the hook |
+| `hook claude-code\|gemini [--on\|--off]` | With no flag, this is what Claude Code / Gemini CLI run on each message. `--on` / `--off` add or remove the hook |
 | `search <words…>` | Search memory across every product |
 | `brief <question…>` | The contextual summary of the thread that matches |
 | `engine status\|set <role> <kind> [url] [model]\|test <role>` | Optional engines: writer, embed, decide, guard ([Engines](./engines.md)) |

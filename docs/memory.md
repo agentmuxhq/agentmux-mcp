@@ -80,9 +80,9 @@ Images, audio, video and PDFs can be attached to questions, answers and notes (`
 - **For agents:** woken agents get the file paths. Agents on this Mac get images back as real images in tool results. Cloud bots fetch files with `mux_attachment`, only from threads they took part in.
 - **Search:** names and captions are searchable.
 
-## Claude Code chats
+## Claude Code and Gemini CLI chats
 
-With the [context hook](./claude-code.md#the-context-hook) on, each Claude Code chat is remembered:
+With the chat hook on ([Claude Code](./claude-code.md#the-context-hook), [Gemini CLI](./gemini.md#the-chat-hook)), each chat is remembered:
 
 - **Binding:** questions it asks without a topic continue *that chat's* thread, and another chat in the same folder gets its own.
 - **Coming back:** when you return to a chat, the hook tells Claude which thread it's on and where that thread stands.

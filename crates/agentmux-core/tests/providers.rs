@@ -141,6 +141,18 @@ fn gemini_registers_in_its_settings_without_touching_the_rest() {
     assert_eq!(v["mcpServers"]["agentmux"]["args"], json!(["mcp", "--agent", "gemini"]));
     assert_eq!(v["mcpServers"]["pencil"]["command"], "pencil");
     assert_eq!(v["model"]["name"], "gemini-3-pro");
+    // Connecting also adds the chat hook (BeforeAgent + SessionStart), named, next to the user's own.
+    let hooks = &v["hooks"];
+    for ev in ["BeforeAgent", "SessionStart"] {
+        let cmd = &hooks[ev][0]["hooks"][0];
+        assert_eq!(cmd["command"], "/Users/x/.agentmux/bin/agentmux hook gemini", "{v}");
+        assert_eq!(cmd["name"], "agentmux");
+    }
+    assert_eq!(p.options()["hook"], true);
+    p.set_option("hook", false).unwrap();
+    assert_eq!(p.options()["hook"], false);
+    let v2: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(v2.get("hooks").is_none() && v2["mcpServers"]["agentmux"].is_object(), "hook off keeps the MCP server: {v2}");
     p.uninstall().unwrap();
     assert!(!p.configured());
     assert!(v["mcpServers"]["pencil"].is_object());

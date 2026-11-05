@@ -85,8 +85,8 @@ enum Cmd {
         #[arg(long)]
         no_hook: bool,
     },
-    /// Agent hooks. `agentmux hook claude-code` is what Claude Code runs (prints what's new);
-    /// `--on` / `--off` add or remove the hook.
+    /// Chat hooks. `agentmux hook claude-code` / `agentmux hook gemini` are what those clients run
+    /// on each message (prints what's new); `--on` / `--off` add or remove the hook.
     Hook {
         target: String,
         #[arg(long)]

@@ -181,7 +181,7 @@ export default function ConnectModal({ ov, initial = "cursor", startAdding, repl
             <span className="text-zinc-300">
               Tell {cat?.name} what&apos;s new each time you send a message
               <span className="mt-0.5 block text-[11px] leading-relaxed text-zinc-500">
-                Adds a hook to ~/.claude/settings.json. When another agent answers after {cat?.name} stopped waiting, the reply shows up in the same chat on your next message.
+                Adds a hook to {sel === "gemini" ? "~/.gemini/settings.json" : "~/.claude/settings.json"}. When another agent answers after {cat?.name} stopped waiting, the reply shows up in the same chat on your next message.
                 AgentMux&apos;s own headless runs skip it.
               </span>
             </span>

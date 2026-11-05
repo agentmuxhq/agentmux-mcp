@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+pub mod chat_hook;
 pub mod claude_code;
 pub mod codex;
 pub mod cursor;

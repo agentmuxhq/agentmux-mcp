@@ -28,66 +28,30 @@ pub fn settings_path() -> PathBuf {
     dirs::home_dir().unwrap_or_default().join(".claude/settings.json")
 }
 
-const EVENTS: [&str; 2] = ["UserPromptSubmit", "SessionStart"];
-const MARK: &str = "hook claude-code";
+const EVENTS: &[&str] = &["UserPromptSubmit", "SessionStart"];
 
-fn is_ours(h: &Value) -> bool {
-    h["command"].as_str().is_some_and(|c| c.contains(".agentmux") || c.contains("agentmux")) && h["command"].as_str().is_some_and(|c| c.ends_with(MARK))
-}
+/// Claude Code's hook wiring.
+pub const HOOK: chat_hook::HookSpec = chat_hook::HookSpec { agent: "claude", events: EVENTS, start_event: "SessionStart", mark: "hook claude-code", named: false };
 
-fn quote(p: &Path) -> String {
-    let s = p.to_string_lossy();
-    if s.contains(' ') { format!("'{s}'") } else { s.to_string() }
-}
+pub use chat_hook::HookEvent;
 
-/// Add (or, with `link = None`, remove) our hook entries, leaving everything else alone.
+/// Add (or, with `link = None`, remove) our entries in Claude Code's settings.
 pub fn edit_hooks(path: &Path, link: Option<&Path>) -> Result<()> {
-    use crate::vault::atomic_write;
-    let mut cfg: Value = if path.exists() {
-        let raw = std::fs::read_to_string(path)?;
-        let bak = path.with_extension("json.agentmux.bak");
-        if !bak.exists() {
-            atomic_write(&bak, &raw)?;
-        }
-        serde_json::from_str(&raw).map_err(|_| anyhow::anyhow!("{} is not valid JSON; refusing to edit", path.display()))?
-    } else if link.is_some() {
-        std::fs::create_dir_all(path.parent().unwrap())?;
-        json!({})
-    } else {
-        return Ok(());
-    };
-    if !cfg["hooks"].is_object() {
-        cfg["hooks"] = json!({});
-    }
-    for ev in EVENTS {
-        let mut groups: Vec<Value> = cfg["hooks"][ev].as_array().cloned().unwrap_or_default();
-        // Drop our old entries first so a re-install never duplicates.
-        for g in groups.iter_mut() {
-            if let Some(hs) = g["hooks"].as_array_mut() {
-                hs.retain(|h| !is_ours(h));
-            }
-        }
-        groups.retain(|g| g["hooks"].as_array().is_none_or(|h| !h.is_empty()));
-        if let Some(l) = link {
-            groups.push(json!({"hooks": [{"type": "command", "command": format!("{} {MARK}", quote(l))}]}));
-        }
-        if groups.is_empty() {
-            cfg["hooks"].as_object_mut().unwrap().remove(ev);
-        } else {
-            cfg["hooks"][ev] = json!(groups);
-        }
-    }
-    if cfg["hooks"].as_object().is_some_and(|o| o.is_empty()) {
-        cfg.as_object_mut().unwrap().remove("hooks");
-    }
-    atomic_write(path, &serde_json::to_string_pretty(&cfg)?)
+    chat_hook::edit_hooks(&HOOK, path, link)
 }
 
 pub fn hook_enabled() -> bool {
-    std::fs::read_to_string(settings_path())
-        .ok()
-        .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-        .is_some_and(|v| EVENTS.iter().all(|ev| v["hooks"][ev].as_array().is_some_and(|gs| gs.iter().any(|g| g["hooks"].as_array().is_some_and(|hs| hs.iter().any(is_ours))))))
+    chat_hook::hook_enabled(&HOOK, &settings_path())
+}
+
+/// Run by `agentmux hook claude-code`: remember the chat, return what to add to it.
+pub fn on_hook(vault: &crate::Vault, ev: &HookEvent) -> Result<Option<String>> {
+    chat_hook::on_hook(&HOOK, vault, ev)
+}
+
+/// What's new for Claude, as text for its chat.
+pub fn hook_context(vault: &crate::Vault) -> Result<Option<String>> {
+    chat_hook::updates_text(vault, "claude")
 }
 
 impl Provider for ClaudeCode {
@@ -150,82 +114,3 @@ impl Provider for ClaudeCode {
     }
 }
 
-/// The hook's view of the current Claude Code chat: which event, which chat, which folder.
-#[derive(Default, Debug, Clone)]
-pub struct HookEvent {
-    pub event: String,
-    pub chat: Option<String>,
-    pub cwd: Option<String>,
-}
-
-impl HookEvent {
-    pub fn parse(stdin: &str) -> HookEvent {
-        let v: Value = serde_json::from_str(stdin).unwrap_or(Value::Null);
-        HookEvent {
-            event: v["hook_event_name"].as_str().unwrap_or("").to_string(),
-            chat: v["session_id"].as_str().filter(|s| !s.is_empty()).map(String::from),
-            cwd: v["cwd"].as_str().filter(|s| !s.is_empty()).map(String::from),
-        }
-    }
-}
-
-/// Run by the hook: remember which Claude chat is active in which folder (so questions it asks go
-/// to that chat's AgentMux thread), then return what to add to Claude's context, if anything.
-pub fn on_hook(vault: &crate::Vault, ev: &HookEvent) -> Result<Option<String>> {
-    let mut lead = String::new();
-    if let (Some(chat), Some(cwd)) = (&ev.chat, &ev.cwd) {
-        let root = crate::context::workspace_root(Path::new(cwd));
-        vault.touch_thread("claude", chat, &root.to_string_lossy())?;
-        // When a chat starts (or resumes), say which AgentMux thread it belongs to and where it stands.
-        if ev.event == "SessionStart" {
-            if let Some(sess) = vault.thread_binding("claude", chat)? {
-                if let (Some(room), Some(title)) = (vault.session_room(&sess)?, vault.session_title(&sess)?) {
-                    let room_name = vault.room(&room)?.and_then(|r| r["title"].as_str().map(String::from)).unwrap_or_default();
-                    lead = format!("AgentMux: this chat is linked to the thread \"{room_name} › {title}\" (session {sess}). Questions you ask other agents from here continue it; mux_brief gives its full context.\n");
-                    if let Some(sum) = crate::memory::summary_of(vault, &sess)? {
-                        let state: String = sum.lines().skip_while(|l| !l.contains("Current state")).skip(1).take_while(|l| !l.starts_with("## ")).collect::<Vec<_>>().join("\n");
-                        if !state.trim().is_empty() {
-                            lead.push_str(&format!("Where it stands:\n{}\n", state.trim()));
-                        }
-                    }
-                }
-            }
-        }
-    }
-    let updates = hook_context(vault)?;
-    Ok(match (lead.is_empty(), updates) {
-        (true, u) => u,
-        (false, None) => Some(lead),
-        (false, Some(u)) => Some(format!("{lead}\n{u}")),
-    })
-}
-
-/// The text the hook prints into Claude Code's context, or None when nothing is new.
-/// Advances Claude's read cursor, so each update is told once.
-pub fn hook_context(vault: &crate::Vault) -> Result<Option<String>> {
-    let items = vault.updates_for("claude", true)?;
-    if items.is_empty() {
-        return Ok(None);
-    }
-    let clip = |s: &str, n: usize| if s.chars().count() > n { format!("{}…", s.chars().take(n).collect::<String>()) } else { s.to_string() };
-    let mut out = String::from("AgentMux: since your last message, other agents got back to you.\n");
-    for u in &items {
-        let who = u["withName"].as_str().unwrap_or("?");
-        let t = u["ticket"].as_str().unwrap_or("");
-        let q = clip(u["question"].as_str().unwrap_or(""), 120);
-        let line = match (u["kind"].as_str(), u["status"].as_str()) {
-            (Some("answer"), Some("answered")) => format!("- {who} answered your question \"{q}\" (ticket {t}): {}", clip(u["answer"].as_str().unwrap_or(""), 500)),
-            (Some("answer"), _) => format!("- Your question to {who} \"{q}\" failed (ticket {t}): {}", clip(u["answer"].as_str().unwrap_or(""), 200)),
-            (Some("notice"), _) => format!("- Notice: {}", clip(u["question"].as_str().unwrap_or(""), 300)),
-            _ => format!("- {who} asked you (ticket {t}): \"{q}\". Answer it with mux_reply."),
-        };
-        out.push_str(&line);
-        out.push('\n');
-        if out.len() > 1500 {
-            out.push_str("- …more: call mux_updates.\n");
-            break;
-        }
-    }
-    out.push_str("Mention these to the user if they are relevant to what they just asked.");
-    Ok(Some(out))
-}

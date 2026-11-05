@@ -123,4 +123,18 @@ async fn group_threads_media_and_claude_chats() {
     assert!(lead.contains("Animation export"), "{lead}");
     let td = exchange(&core, "claude", &ws, "cursor", None, "Done?", "Yes.");
     assert_eq!(session_of(&core, &td), bound);
+
+    // Gemini CLI chats work the same way through its own hook events.
+    use agentmux_core::providers::{chat_hook, gemini};
+    let g = chat_hook::HookEvent { event: "BeforeAgent".into(), chat: Some("gem-1".into()), cwd: Some(ws.to_string_lossy().into()) };
+    chat_hook::on_hook(&gemini::HOOK, v, &g).unwrap();
+    let tg = exchange(&core, "gemini", &ws, "claude", Some("Gemini review"), "Review the export?", "Looks good.");
+    let gem_thread = session_of(&core, &tg);
+    assert_eq!(session_of(&core, &exchange(&core, "gemini", &ws, "cursor", None, "And you?", "Fine.")), gem_thread);
+    // Claude answered Gemini: on Gemini's next message the hook carries it (Gemini wants JSON; the CLI wraps it).
+    let ask = core.start_ticket_in(&ctx("claude", &ws), None, Some(&gem_thread), "gemini", "Can you double-check frame 12?", None).unwrap();
+    let text = chat_hook::on_hook(&gemini::HOOK, v, &g).unwrap().unwrap();
+    assert!(text.contains("frame 12") && text.contains(&ask), "{text}");
+    let start = chat_hook::HookEvent { event: "SessionStart".into(), ..g.clone() };
+    assert!(chat_hook::on_hook(&gemini::HOOK, v, &start).unwrap().unwrap().contains("Gemini review"));
 }

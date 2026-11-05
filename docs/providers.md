@@ -7,7 +7,7 @@ A **provider** is a kind of agent AgentMux can talk to. Each one is a single Rus
 | [Cursor](./cursor.md) | `cursor` | `cursor-agent -p` | Edits `~/.cursor/mcp.json` |
 | [Claude Code](./claude-code.md) | `claude` | `claude -p` | **Context hook**: late replies show up in the same chat |
 | [ChatGPT / Codex](./codex.md) | `chatgpt` | `codex exec` | Uses the Codex CLI bundled with the ChatGPT app |
-| [Gemini CLI](./gemini.md) | `gemini` | `gemini -p` | Edits `~/.gemini/settings.json`; read-only wakes use plan mode |
+| [Gemini CLI](./gemini.md) | `gemini` | `gemini -p` | **Chat hook** like Claude Code's; read-only wakes use plan mode |
 | [Grok bots](./grok.md) | `grok`, `grok:<slug>` | Webhook or inbox | **Multi-instance**, **remote access** over a tunnel with a per-bot token |
 | [Custom](./custom-agents.md) | anything | Your CLI | A TOML manifest, no Rust needed |
 
