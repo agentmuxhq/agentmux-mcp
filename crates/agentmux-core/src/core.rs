@@ -612,6 +612,9 @@ impl Core {
         self.emit("ticket", json!({"id": ticket_id, "status": status, "from": from, "to": to, "room": room}));
         let _ = self.vault.export_markdown(&room);
         self.notifier(ticket_id).notify_waiters();
+        if matches!(status, "answered" | "failed") && from != to {
+            self.wake_asker(ticket_id, &from, &to, status, &body);
+        }
 
         if status == "answered" {
             if let Some(next) = t["then"].as_str() {
@@ -627,6 +630,39 @@ impl Core {
             }
         }
         Ok(true)
+    }
+
+    /// A bot that asked a question has usually finished its run by the time the answer comes (the
+    /// recipient may take hours: Claude Desktop answers when the user opens it). Wake it with the
+    /// answer so it carries on (forwarding it to whoever needed it), unless it already got the
+    /// answer while still waiting in the same run.
+    fn wake_asker(self: &Arc<Self>, ticket_id: &str, from: &str, to: &str, status: &str, body: &str) {
+        let webhook = self.vault.providers().ok().into_iter().flatten().find(|p| p["id"] == from).is_some_and(|p| p["wakeKind"] == "webhook");
+        let (Ok(rt), true) = (tokio::runtime::Handle::try_current(), webhook) else { return };
+        let Ok((url, key)) = webhook::load(&self.vault, from) else { return };
+        let (core, tid, from, to) = (self.clone(), ticket_id.to_string(), from.to_string(), to.to_string());
+        let mut text: String = body.chars().take(20_000).collect();
+        if text.len() < body.len() {
+            text.push_str("\n…(cut; call mux_get_reply for the rest)");
+        }
+        let what = if status == "answered" { "was answered" } else { "could not be answered" };
+        let name = self.vault.agent_name(&to);
+        let ctx = format!(
+            "agentmux_answer\nFor: @{from}\nTicket: {tid}\n\nYour question {tid} to @{to} ({name}) {what}:\n\n{text}\n\n\
+             Carry on with what you asked it for: if someone is waiting on this (your user, or an agent you're working with), pass it on now \
+             with mux_ask_peer or mux_post in the same thread. If nothing more is needed, do nothing. No mux_reply is needed for this message.\n"
+        );
+        rt.spawn(async move {
+            // Give a caller still waiting in the same run (mux_ask_peer / mux_get_reply) a moment to collect it.
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            if core.vault.setting(&format!("ticket.{tid}.delivered")).ok().flatten().is_some() {
+                return;
+            }
+            match webhook::post(&url, &key, &ctx).await {
+                Ok(_) => tracing::info!("woke @{from} with the answer to {tid}"),
+                Err(e) => tracing::warn!("could not wake @{from} with the answer to {tid}: {e}"),
+            }
+        });
     }
 
     /// Close questions that were never going to be answered: the recipient is woken by AgentMux (CLI or
@@ -671,6 +707,8 @@ impl Core {
         loop {
             let t = self.vault.ticket(ticket_id)?.ok_or_else(|| anyhow!("unknown ticket {ticket_id}"))?;
             if !matches!(t["status"].as_str(), Some("pending") | Some("running")) {
+                // The asker has it now: no need to wake it later with the same answer.
+                let _ = self.vault.set_setting(&format!("ticket.{ticket_id}.delivered"), "1");
                 return Ok(t);
             }
             let rem = deadline.saturating_duration_since(Instant::now());
