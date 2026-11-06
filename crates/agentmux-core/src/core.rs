@@ -132,6 +132,27 @@ impl Core {
         Ok(())
     }
 
+    /// Delete a room for good (the user's call, from the app). Everyone who took part is told;
+    /// attachment files AgentMux stored for it are removed from its media folder.
+    pub fn delete_room(self: &Arc<Self>, room: &str, by: &str) -> Result<()> {
+        let title = self.vault.room(room)?.and_then(|r| r["title"].as_str().map(String::from)).unwrap_or_else(|| room.to_string());
+        let members = self.vault.room_members(room).unwrap_or_default();
+        let files = self.vault.delete_room(room)?;
+        let media = crate::media::dir(&self.vault);
+        for f in files {
+            let p = std::path::PathBuf::from(&f);
+            if p.starts_with(&media) {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+        let who = if by == "user" { "the user".to_string() } else { self.vault.agent_name(by) };
+        for m in members.iter().filter(|m| m.as_str() != by) {
+            let _ = self.vault.add_notice(m, "", &format!("Room \"{title}\" was deleted by {who}, with its threads. Don't refer to it again."));
+        }
+        self.emit("room", json!({"id": room, "deleted": true}));
+        Ok(())
+    }
+
     /// Rename an agent (its display name; its @id, and everything addressed to it, stays). Every
     /// thread it took part in gets a note, every agent that shared one with it gets a notice, and
     /// the agent itself is told (woken, if it's a bot with a webhook) so it uses its new name.

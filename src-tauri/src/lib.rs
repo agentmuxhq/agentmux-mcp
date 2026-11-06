@@ -364,6 +364,12 @@ fn merge_rooms(state: State<'_, AppState>, from: String, into: String) -> Result
     state.core.merge_rooms(&from, &into, "user").map_err(err)
 }
 
+/// Delete a room for good (threads, messages, questions, attachments). The app confirms first.
+#[tauri::command]
+fn delete_room(state: State<'_, AppState>, room: String) -> Result<(), String> {
+    state.core.delete_room(&room, "user").map_err(err)
+}
+
 /// Rename a session. The name doubles as its topic, so agents asking about it land there.
 #[tauri::command]
 fn rename_session(state: State<'_, AppState>, session: String, title: String) -> Result<(), String> {
@@ -982,6 +988,7 @@ pub fn run() {
             create_room,
             new_session,
             rename_room,
+            delete_room,
             merge_rooms,
             rename_session,
             set_context,

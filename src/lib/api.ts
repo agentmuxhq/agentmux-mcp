@@ -266,6 +266,7 @@ export const api = {
   newSession: (room: string, title: string) => call<string>("new_session", { room, title }),
   renameRoom: (room: string, title: string) => call<void>("rename_room", { room, title }),
   mergeRooms: (from: string, into: string) => call<void>("merge_rooms", { from, into }),
+  deleteRoom: (room: string) => call<void>("delete_room", { room }),
   renameSession: (session: string, title: string) => call<void>("rename_session", { session, title }),
   setContext: (room: string, kind: "notes" | "terminal" | "diff", content: string) =>
     call<void>("set_context", { room, kind, content }),

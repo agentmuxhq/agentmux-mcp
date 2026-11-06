@@ -12,6 +12,7 @@ import {
   Send,
   Settings,
   Terminal,
+  Trash2,
 } from "lucide-react";
 import {
   agentMeta,
@@ -32,6 +33,7 @@ import {
 } from "./lib/api";
 import { Avatar, Badge, Dot, btn, btnPrimary } from "./components/ui";
 import ConnectModal from "./components/ConnectModal";
+import CleanupRoomsModal from "./components/CleanupRoomsModal";
 import NewRoomModal from "./components/NewRoomModal";
 import Starter from "./components/Starter";
 import Markdown from "./components/Markdown";
@@ -195,6 +197,7 @@ export default function App() {
   const [sending, setSending] = useState(false);
 
   const [showNewRoom, setShowNewRoom] = useState(false);
+  const [showCleanup, setShowCleanup] = useState(false);
   const [connectInit, setConnectInit] = useState<{
     agent?: string;
     scope?: "connect" | "edit" | "add";
@@ -529,13 +532,24 @@ export default function App() {
               <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
                 Bridge rooms
               </span>
-              <button
-                onClick={() => setShowNewRoom(true)}
-                className="rounded p-1 text-zinc-400 hover:bg-white/10 hover:text-white"
-                title="Add a workspace"
-              >
-                <Plus size={14} />
-              </button>
+              <span className="flex items-center">
+                {ov.rooms.length > 0 && (
+                  <button
+                    onClick={() => setShowCleanup(true)}
+                    className="rounded p-1 text-zinc-400 hover:bg-white/10 hover:text-white"
+                    title="Clean up rooms: delete old ones"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                )}
+                <button
+                  onClick={() => setShowNewRoom(true)}
+                  className="rounded p-1 text-zinc-400 hover:bg-white/10 hover:text-white"
+                  title="Add a workspace"
+                >
+                  <Plus size={14} />
+                </button>
+              </span>
             </div>
             {ov.rooms.length === 0 && (
               <div className="px-2 py-2 text-[11px] leading-relaxed text-zinc-600">
@@ -643,6 +657,32 @@ export default function App() {
               )}
               <button
                 className={`${btn} ${ov.rooms.length > 1 ? "" : "ml-auto"}`}
+                title="Delete this room for good"
+                onClick={async () => {
+                  const typed = window.prompt(
+                    `Delete "${room.title}" for good?\n\nIts ${room.sessions.length} thread(s), messages, questions and attachments are erased and can't be brought back. Agents in it are told. To keep the history, use "Merge into…" instead.\n\nType the room name to confirm:`,
+                    "",
+                  );
+                  if (typed === null) return;
+                  if (typed.trim() !== room.title) {
+                    setError("Room not deleted: the name didn't match.");
+                    return;
+                  }
+                  await api
+                    .deleteRoom(room.id)
+                    .then(() =>
+                      setRoomId(
+                        ov.rooms.find((r) => r.id !== room.id)?.id ?? null,
+                      ),
+                    )
+                    .catch((err) => setError(String(err)));
+                  refresh();
+                }}
+              >
+                <Trash2 size={13} />
+              </button>
+              <button
+                className={btn}
                 onClick={async () => {
                   const name = window.prompt(
                     "What is this session about? (e.g. Release plan, QA). Agents asking about the same topic land here.",
@@ -1201,6 +1241,16 @@ export default function App() {
         </div>
       </aside>
 
+      {showCleanup && (
+        <CleanupRoomsModal
+          ov={ov}
+          onClose={() => setShowCleanup(false)}
+          onChanged={() => {
+            setRoomId(null);
+            refresh();
+          }}
+        />
+      )}
       {showConnect && (
         <ConnectModal
           ov={ov}

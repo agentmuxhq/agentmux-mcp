@@ -478,6 +478,36 @@ impl Vault {
         Ok(())
     }
 
+    /// Delete room `room` for good: its threads, messages (and their search index), questions,
+    /// summaries, briefs, folders and attachment records. Returns the attachment files to remove.
+    /// Refuses while an agent is still working on a question there.
+    pub fn delete_room(&self, room: &str) -> Result<Vec<String>> {
+        let mut c = self.conn.lock().unwrap();
+        let tx = c.transaction()?;
+        if tx.query_row("SELECT 1 FROM rooms WHERE id = ?1", params![room], |r| r.get::<_, i64>(0)).optional()?.is_none() {
+            anyhow::bail!("unknown room '{room}'");
+        }
+        if tx.query_row("SELECT 1 FROM tickets WHERE room_id = ?1 AND status = 'running' LIMIT 1", params![room], |r| r.get::<_, i64>(0)).optional()?.is_some() {
+            anyhow::bail!("an agent is still answering a question in this room; try again when it's done");
+        }
+        let files: Vec<String> = {
+            let mut st = tx.prepare("SELECT path FROM attachments WHERE room_id = ?1")?;
+            let v = st.query_map(params![room], |r| r.get::<_, Option<String>>(0))?.filter_map(|x| x.ok().flatten()).collect();
+            v
+        };
+        // The search index is external-content: remove its rows before the messages go.
+        tx.execute("INSERT INTO messages_fts(messages_fts, rowid, text) SELECT 'delete', rowid, text FROM messages WHERE room_id = ?1", params![room])?;
+        tx.execute("DELETE FROM agent_threads WHERE session_id IN (SELECT id FROM sessions WHERE room_id = ?1)", params![room])?;
+        for table in ["messages", "tickets", "notices", "attachments", "embeddings", "summaries", "briefs", "context", "room_members", "room_folders", "route_log", "sessions"] {
+            tx.execute(&format!("DELETE FROM {table} WHERE room_id = ?1"), params![room])?;
+        }
+        // Agents whose current room this was start fresh.
+        tx.execute("DELETE FROM settings WHERE key LIKE 'agent.%.room' AND value = ?1", params![room])?;
+        tx.execute("DELETE FROM rooms WHERE id = ?1", params![room])?;
+        tx.commit()?;
+        Ok(files)
+    }
+
     /// A message for an agent about its room (renamed, merged): shown in mux_updates and the
     /// Claude Code hook, once.
     pub fn add_notice(&self, agent: &str, room: &str, text: &str) -> Result<()> {
