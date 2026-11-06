@@ -4,6 +4,15 @@ use std::process::Command;
 const MAX_DIFF: usize = 20_000;
 
 /// Walk up from `start` to the nearest directory containing `.git`.
+/// Folders an agent runs in that aren't a project: your home folder, the filesystem root, and the
+/// per-chat scratch folders some apps make (Codex: ~/Documents/Codex/<date>/<chat>). Questions from
+/// these are filed by what they're about, not by the folder. (AgentMux's own home is the Cloud
+/// bots room and is handled separately.)
+pub fn is_scratch_dir(root: &Path) -> bool {
+    let home = dirs::home_dir().unwrap_or_default();
+    root == home || root == Path::new("/") || root.starts_with(home.join("Documents/Codex"))
+}
+
 pub fn workspace_root(start: &Path) -> PathBuf {
     let mut cur = start;
     loop {

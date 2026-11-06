@@ -223,12 +223,37 @@ impl Core {
             bail!("unknown room '{r}' (see mux_list_rooms)");
         }
         let root = context::workspace_root(Path::new(&ctx.cwd));
+        // Not a project folder (home, an app's scratch folder): the product this agent was last
+        // talking about, else the Inbox. Never a room named after the folder.
+        if context::is_scratch_dir(&root) {
+            let room = match self.vault.setting(&format!("agent.{}.room", ctx.agent))?.filter(|r| self.vault.room(r).ok().flatten().is_some()) {
+                Some(r) => r,
+                None => match self.vault.find_room("Inbox")? {
+                    Some(r) => r,
+                    None => self.vault.create_room("Inbox")?,
+                },
+            };
+            let sess = match self.vault.latest_session(&room)? {
+                Some(s) => s,
+                None => self.vault.new_session(&room, "")?,
+            };
+            if self.vault.is_agent(&ctx.agent) {
+                self.vault.add_member(&room, &ctx.agent)?;
+            }
+            return Ok((room, sess));
+        }
         let (branch, _) = context::capture_git(&root);
         let (room, sess) = self.vault.ensure_room(&root.to_string_lossy(), &branch)?;
         if self.vault.is_agent(&ctx.agent) {
             self.vault.add_member(&room, &ctx.agent)?;
         }
         Ok((room, sess))
+    }
+
+    /// Does this caller work in a real project folder? (False for home and scratch folders.)
+    pub fn in_project(&self, ctx: &CallerCtx) -> bool {
+        let root = context::workspace_root(Path::new(&ctx.cwd));
+        root == config::home() || !context::is_scratch_dir(&root)
     }
 
     /// Create a ticket, record the request, and start waking the recipient in the background.
@@ -358,6 +383,10 @@ impl Core {
         }
 
         let ticket = self.vault.create_ticket(&sess, &room, &ctx.agent, to, question, hop, then.as_deref())?;
+        // The product this agent is on now (used when it asks from a non-project folder).
+        if self.vault.is_agent(&ctx.agent) {
+            self.vault.set_setting(&format!("agent.{}.room", ctx.agent), &room)?;
+        }
         let msg = self.vault.add_message(&sess, &room, &ctx.agent, Some(to), "a2a_request", question, None, Some(&ticket))?;
         if let Some(mid) = msg["id"].as_str() {
             crate::media::link(&self.vault, &opts.attachments, mid)?;

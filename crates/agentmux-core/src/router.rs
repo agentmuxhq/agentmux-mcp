@@ -26,7 +26,7 @@ pub enum Route {
 
 /// Auto-route at or above this; ask between `ASK_FLOOR` and here; a new thread below the floor.
 const SURE: f64 = 0.7;
-const ASK_FLOOR: f64 = 0.25;
+const ASK_FLOOR: f64 = 0.35;
 
 fn topic_words(t: &str) -> Vec<String> {
     crate::vault::topic_key(t).split(' ').filter(|w| w.chars().count() >= 2).map(String::from).collect()
@@ -205,4 +205,170 @@ pub fn stats(vault: &Vault) -> Result<Value> {
     Ok(json!({"total": total, "byMethod": by_method, "asked": asked, "answered": resolved, "agreedWithRouter": agreed,
               "agreement": agreement, "byDecisionEngine": decided, "advice": advice,
               "askRate": if total > 0 { Some(asked as f64 / total as f64) } else { None }}))
+}
+
+// ───────── which product (room) ─────────
+//
+// For agents that don't run in a project folder (Cursor and Codex start AgentMux in your home or
+// a scratch folder), the product comes from what the conversation is about.
+
+#[derive(Debug, Clone)]
+pub enum ProductRoute {
+    /// File it under this existing room.
+    Use { room: String, method: &'static str },
+    /// A new product room with this name.
+    New { name: String },
+    /// Unsure: let the user pick a room, or the suggested new name.
+    Ask { options: Vec<Value>, suggested: String },
+}
+
+const DOMAIN_TLDS: &[&str] = &["io", "com", "dev", "app", "ai", "net", "org", "co", "so", "sh", "xyz", "tech", "cloud"];
+
+/// Product names a text mentions through its websites: "apito.io" → "apito".
+pub fn mentioned_products(text: &str) -> Vec<String> {
+    let mut out = vec![];
+    for tok in text.split(|c: char| c.is_whitespace() || matches!(c, '(' | ')' | ',' | '"' | '\'' | '<' | '>' | '`')) {
+        let host = tok.trim_start_matches("https://").trim_start_matches("http://").split(['/', ':', '?']).next().unwrap_or("").to_lowercase();
+        let parts: Vec<&str> = host.split('.').filter(|p| !p.is_empty()).collect();
+        if parts.len() >= 2 && DOMAIN_TLDS.contains(parts.last().unwrap()) {
+            let name = parts[parts.len() - 2];
+            if name.len() >= 3 && !matches!(name, "localhost" | "github" | "google" | "example" | "gmail") && !out.iter().any(|x: &String| x == name) {
+                out.push(name.to_string());
+            }
+        }
+    }
+    out
+}
+
+fn title_case(s: &str) -> String {
+    s.split_whitespace()
+        .map(|w| {
+            let mut c = w.chars();
+            c.next().map(|f| f.to_uppercase().collect::<String>() + c.as_str()).unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A name for a new product room: the writer engine's (e.g. "Apito website refactor") when one is
+/// on, else the product its websites name, else the topic, else the question's first words.
+pub async fn suggest_room_name(vault: &Vault, topic: Option<&str>, question: &str) -> String {
+    if engines::Engine::load(vault, "writer").enabled() {
+        let prompt = format!("Topic: {}\nMessage: {}", topic.unwrap_or("(none)"), memory::clip(question, 1500));
+        if let Ok(t) = engines::complete(
+            vault,
+            "Name the product or project this conversation belongs to, in 2 to 5 words, Title Case, like \"Apito Website Refactor\" or \"SQLite Builder Guest Explorer\". Reply with the name only.",
+            &prompt,
+        )
+        .await
+        {
+            let name = t.lines().next().unwrap_or("").trim().trim_matches(|c: char| matches!(c, '"' | '\'' | '*' | '.' | '#')).trim().to_string();
+            if (3..=60).contains(&name.chars().count()) {
+                return name;
+            }
+        }
+    }
+    let products = mentioned_products(&format!("{} {}", topic.unwrap_or(""), question));
+    if !products.is_empty() {
+        return products.iter().map(|p| title_case(p)).collect::<Vec<_>>().join(" & ");
+    }
+    if let Some(t) = topic.filter(|t| !t.trim().is_empty()) {
+        return title_case(t.trim());
+    }
+    let words: Vec<&str> = question.split_whitespace().filter(|w| w.chars().any(|c| c.is_alphanumeric())).take(5).collect();
+    if words.is_empty() { "Untitled".into() } else { title_case(&words.join(" ")) }
+}
+
+/// Rooms that are real products (not Cloud bots, Inbox, or rooms named after a scratch folder).
+fn product_rooms(vault: &Vault) -> Result<Vec<(String, String, String)>> {
+    let home = crate::config::home().to_string_lossy().to_string();
+    let c = vault.conn();
+    let mut st = c.prepare("SELECT id, title, COALESCE(workspace_path, '') FROM rooms")?;
+    let rows: Vec<(String, String, String)> = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?.collect::<std::result::Result<_, _>>()?;
+    Ok(rows
+        .into_iter()
+        .filter(|(_, title, ws)| *ws != home && title != "Inbox" && (ws.is_empty() || !crate::context::is_scratch_dir(std::path::Path::new(ws))))
+        .collect())
+}
+
+/// Which product a question from a non-project folder belongs to.
+pub async fn route_product(vault: &Vault, agent: &str, topic: Option<&str>, question: &str, can_ask: bool) -> Result<ProductRoute> {
+    let rooms = product_rooms(vault)?;
+    let suggested = suggest_room_name(vault, topic, question).await;
+    if rooms.is_empty() {
+        return Ok(ProductRoute::New { name: suggested });
+    }
+    let text = format!("{} {}", topic.unwrap_or(""), question);
+    let ws: Vec<String> = crate::vault::topic_key(&text).split(' ').filter(|w| w.chars().count() >= 3).map(String::from).collect();
+    let products = mentioned_products(&text);
+    let mut score: std::collections::HashMap<String, f64> = rooms.iter().map(|r| (r.0.clone(), 0.0)).collect();
+    let mut site_matched = false;
+    for (id, title, ws_path) in &rooms {
+        let name = format!("{} {}", crate::vault::topic_key(title), crate::vault::topic_key(ws_path));
+        let squashed = name.replace(' ', "");
+        // A website the question names ("apito.io") matching the product's name or folder
+        // ("SQLite Builder" matches sqlitebuilder.com too).
+        if products.iter().any(|p| name.contains(p.as_str()) || squashed.contains(p.as_str())) {
+            *score.get_mut(id).unwrap() += 0.8;
+            site_matched = true;
+        }
+        let hits = ws.iter().filter(|w| name.split(' ').any(|x| x == w.as_str())).count();
+        if hits > 0 {
+            *score.get_mut(id).unwrap() += (0.25 * hits as f64).min(0.5);
+        }
+    }
+    // What memory says: rooms holding threads about this.
+    let q = memory::clip(&text, 400);
+    for (i, h) in memory::search(vault, &q, &memory::Scope::All, 8).await?.iter().enumerate() {
+        if let Some(r) = h["room"].as_str() {
+            if let Some(s) = score.get_mut(r) {
+                *s += 0.45 / (1.0 + i as f64);
+            }
+        }
+    }
+    let mut ranked: Vec<(String, f64)> = score.into_iter().map(|(k, v)| (k, v.min(1.0))).collect();
+    ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let name_of = |id: &str| rooms.iter().find(|r| r.0 == id).map(|r| r.1.clone()).unwrap_or_default();
+    let options: Vec<Value> = ranked.iter().take(4).filter(|r| r.1 > 0.0).map(|(id, sc)| json!({"room": name_of(id), "match": (sc * 100.0).round() / 100.0})).collect();
+    let topic_s = topic.unwrap_or("");
+    let (top, top_score) = ranked.first().cloned().unwrap_or_default();
+    // It names a product's website that none of yours match: a new product, unless something
+    // else matches very strongly.
+    if !products.is_empty() && !site_matched && top_score < 0.8 {
+        log(vault, agent, "", topic_s, "product-new", None, Some(&top), top_score, "rules", &options)?;
+        return Ok(ProductRoute::New { name: suggested });
+    }
+    let second = ranked.get(1).map(|r| r.1).unwrap_or(0.0);
+
+    // A decision engine, when configured.
+    if engines::Engine::load(vault, "decide").enabled() {
+        let short: Vec<&(String, f64)> = ranked.iter().take(5).collect();
+        let mut choices: Vec<(String, String)> = short.iter().enumerate().map(|(i, (id, _))| (format!("p{}", i + 1), name_of(id))).collect();
+        choices.push(("new".into(), format!("A different product (new room \"{suggested}\")")));
+        let state = format!("Topic: {topic_s}\nMessage: {}", memory::clip(question, 1500));
+        match engines::choose(vault, "decide", &state, "Which product or project is this message about?", &choices).await {
+            Ok(Some(d)) if d.confidence >= SURE => {
+                let picked = d.key.strip_prefix('p').and_then(|n| n.parse::<usize>().ok()).and_then(|n| short.get(n - 1));
+                log(vault, agent, "", topic_s, "product-decided", picked.map(|p| p.0.as_str()), Some(&top), d.confidence, &d.engine, &options)?;
+                return Ok(match picked {
+                    Some(p) => ProductRoute::Use { room: p.0.clone(), method: "decided" },
+                    None => ProductRoute::New { name: suggested },
+                });
+            }
+            Ok(_) => {}
+            Err(e) => tracing::warn!("decide engine failed for the product choice: {e}"),
+        }
+    } else if top_score >= 0.6 && top_score - second >= 0.2 {
+        log(vault, agent, "", topic_s, "product", Some(&top), Some(&top), top_score, "rules", &options)?;
+        return Ok(ProductRoute::Use { room: top, method: "product" });
+    }
+    if top_score < ASK_FLOOR {
+        log(vault, agent, "", topic_s, "product-new", None, Some(&top), top_score, "rules", &options)?;
+        return Ok(ProductRoute::New { name: suggested });
+    }
+    if can_ask {
+        log(vault, agent, "", topic_s, "product-asked", None, Some(&top), top_score, "rules", &options)?;
+        return Ok(ProductRoute::Ask { options, suggested });
+    }
+    Ok(if top_score >= 0.5 { ProductRoute::Use { room: top, method: "best-guess" } } else { ProductRoute::New { name: suggested } })
 }

@@ -19,7 +19,7 @@ fn tool(name: &str, desc: &str, props: Value, required: &[&str]) -> Value {
 }
 
 pub fn tools() -> Vec<Value> {
-    let room = json!({"type": "string", "description": "Room id; defaults to the room for your current workspace"});
+    let room = json!({"type": "string", "description": "Room (product) id or name; defaults to your workspace's product, or one chosen from the conversation"});
     vec![
         tool("mux_whoami", "Show which agent AgentMux thinks you are and your current room.", json!({}), &[]),
         tool("mux_contacts", "List the agents you can reach, whether they are connected, and how they are woken.", json!({}), &[]),
@@ -265,14 +265,44 @@ async fn call_tool(core: &Arc<Core>, ctx: &CallerCtx, name: &str, a: &Value) -> 
             // A folder AgentMux has never seen gets its own room; tell the agent so it can ask the
             // user which product it belongs to.
             let root = crate::context::workspace_root(std::path::Path::new(&ctx.cwd));
-            let new_folder = arg_str(a, "room").is_none() && root != crate::config::home() && core.vault.folder_room(&root.to_string_lossy())?.is_none();
+            let new_folder = arg_str(a, "room").is_none() && core.in_project(ctx) && root != crate::config::home() && core.vault.folder_room(&root.to_string_lossy())?.is_none();
             let topic = arg_str(a, "topic").filter(|t| !t.trim().is_empty());
             let mut session = arg_str(a, "session").filter(|s| !s.is_empty()).map(String::from);
             let mut new_session = a.get("new_session").and_then(|v| v.as_bool()).unwrap_or(false);
+            let local = !crate::providers::remote_access(&ctx.agent);
+            // Which product. A room named by the agent (creating it if the user picked a new name),
+            // or, for agents not running in a project folder, the router reading the conversation.
+            let mut room_hint: Option<String> = None;
+            if let Some(r) = arg_str(a, "room").filter(|r| !r.trim().is_empty()) {
+                room_hint = Some(match core.vault.find_room(r)? {
+                    Some(id) => id,
+                    None if local => core.vault.create_room(r)?,
+                    None => bail!("unknown room '{r}'"),
+                });
+            } else if session.is_none() && local && !core.in_project(ctx) {
+                let recent = core.vault.setting(&format!("agent.{}.room", ctx.agent))?.filter(|r| core.vault.room(r).ok().flatten().is_some());
+                if topic.is_some() || recent.is_none() {
+                    match crate::router::route_product(&core.vault, &ctx.agent, topic, q, true).await? {
+                        crate::router::ProductRoute::Use { room, .. } => room_hint = Some(room),
+                        crate::router::ProductRoute::New { name } => {
+                            room_hint = Some(match core.vault.find_room(&name)? {
+                                Some(id) => id,
+                                None => core.vault.create_room(&name)?,
+                            })
+                        }
+                        crate::router::ProductRoute::Ask { options, suggested } => {
+                            return Ok(json!({"status": "needs_choice", "choice": "product", "topic": topic, "products": options, "suggestedNewProduct": suggested,
+                                "note": "AgentMux isn't sure which product this is about. Ask the user which one (or the suggested new name, or a name of their own), then call mux_ask_peer again with the same question and `room` set to that product's name."}));
+                        }
+                    }
+                }
+            }
+            let room_arg = room_hint.clone();
+            let room_arg = room_arg.as_deref().or(arg_str(a, "room"));
             match (topic, &session) {
                 // A topic without a thread: the router decides, or hands the choice to the user.
                 (Some(t), None) if !new_session => {
-                    let (room, _) = core.resolve_room(ctx, arg_str(a, "room"))?;
+                    let (room, _) = core.resolve_room(ctx, room_arg)?;
                     match crate::router::route(&core.vault, &ctx.agent, &room, t, q, !crate::providers::remote_access(&ctx.agent)).await? {
                         crate::router::Route::Use { session: s, .. } => session = Some(s),
                         crate::router::Route::New => new_session = true,
@@ -289,7 +319,7 @@ async fn call_tool(core: &Arc<Core>, ctx: &CallerCtx, name: &str, a: &Value) -> 
                     }
                 }
                 (Some(t), None) => {
-                    let (room, _) = core.resolve_room(ctx, arg_str(a, "room"))?;
+                    let (room, _) = core.resolve_room(ctx, room_arg)?;
                     crate::router::resolve(&core.vault, &ctx.agent, &room, t, "new")?;
                 }
                 _ => {}
@@ -297,7 +327,7 @@ async fn call_tool(core: &Arc<Core>, ctx: &CallerCtx, name: &str, a: &Value) -> 
             let (ids, desc) = store_attachments(core, ctx, a)?;
             let question = if desc.is_empty() { q.to_string() } else { format!("{q}\n{desc}") };
             let opts = crate::core::AskOpts { topic: topic.map(String::from), new_session, attachments: ids };
-            let ticket = core.start_ticket_with(ctx, arg_str(a, "room"), session.as_deref(), to, &question, arg_str(a, "then").map(String::from), &opts)?;
+            let ticket = core.start_ticket_with(ctx, room_arg, session.as_deref(), to, &question, arg_str(a, "then").map(String::from), &opts)?;
             let t = core.wait_ticket(&ticket, wait).await?;
             let mut view = ticket_view(&t);
             add_answer_attachments(core, &t, &mut view);
