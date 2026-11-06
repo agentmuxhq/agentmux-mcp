@@ -34,6 +34,7 @@ import {
 import { Avatar, Badge, Dot, btn, btnPrimary } from "./components/ui";
 import ConnectModal from "./components/ConnectModal";
 import CleanupRoomsModal from "./components/CleanupRoomsModal";
+import InboxHelp from "./components/InboxHelp";
 import NewRoomModal from "./components/NewRoomModal";
 import Starter from "./components/Starter";
 import Markdown from "./components/Markdown";
@@ -447,7 +448,10 @@ export default function App() {
       </div>
     );
 
-  const myRunning = Object.entries(running);
+  // Agents that get woken show "working on…"; inbox-only ones get the paste-a-prompt card instead.
+  const myRunning = Object.entries(running).filter(
+    ([, t]) => ov?.providers.find((p) => p.id === t.to)?.wakeKind !== "inbox",
+  );
   const connectedCount = ov.providers.filter((p) => p.connectedAt).length;
 
   return (
@@ -822,6 +826,7 @@ export default function App() {
           )}
         </div>
 
+        {ov && <InboxHelp ov={ov} waiting={Object.entries(running)} />}
         {myRunning.length > 0 && (
           <div className="border-t border-white/10 px-6 py-2 text-xs text-amber-300">
             {myRunning.map(([id, t]) => (

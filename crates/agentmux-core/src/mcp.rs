@@ -353,6 +353,13 @@ async fn call_tool(core: &Arc<Core>, ctx: &CallerCtx, name: &str, a: &Value) -> 
             if let Some(title) = core.vault.session_title(t["sessionId"].as_str().unwrap_or(""))? {
                 view["thread"] = json!(title);
             }
+            // Nothing can wake an inbox-only agent (Claude Desktop, a bot without a webhook): say
+            // so plainly, so the asker doesn't think it's stuck, and tell it the user was asked.
+            if view["status"] == "pending" {
+                if let Some(note) = core.inbox_only_note(t["to"].as_str().unwrap_or("")) {
+                    view["waiting_on_user"] = json!(note);
+                }
+            }
             if new_folder {
                 let rooms: Vec<String> = core
                     .vault

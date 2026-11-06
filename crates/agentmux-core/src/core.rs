@@ -132,6 +132,22 @@ impl Core {
         Ok(())
     }
 
+    /// For an agent nothing can wake (it only reads AgentMux when someone uses it): what to tell
+    /// whoever asked it. The app shows the user a ready-to-paste prompt for that agent at the same time.
+    pub fn inbox_only_note(&self, to: &str) -> Option<String> {
+        let p = self.vault.providers().ok()?.into_iter().find(|p| p["id"] == to)?;
+        if p["wakeKind"] != "inbox" {
+            return None;
+        }
+        let name = self.vault.agent_name(to);
+        Some(format!(
+            "Sorry for the wait: {name} can't be woken automatically. It only reads AgentMux when the user opens it, \
+             so AgentMux has asked the user to open {name} and paste a prompt telling it to answer. Your question is \
+             saved in its inbox and you'll get the answer here when it replies (check with mux_get_reply or mux_updates). \
+             Tell your user this if they're waiting; you can queue more questions for {name} in the meantime."
+        ))
+    }
+
     /// Delete a room for good (the user's call, from the app). Everyone who took part is told;
     /// attachment files AgentMux stored for it are removed from its media folder.
     pub fn delete_room(self: &Arc<Self>, room: &str, by: &str) -> Result<()> {

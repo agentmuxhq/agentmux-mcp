@@ -50,6 +50,9 @@ async fn a_bot_asking_back_stays_in_the_conversation() {
     // (it reads them all next time it's used); a woken agent still takes one at a time.
     let (r, _) = tool(&core, &bot, &home, "mux_ask_peer", json!({"to": "claude-desktop", "question": "Script still needed.", "wait_s": 0})).await.unwrap();
     assert!(r["ticket"].is_string(), "{r}");
+    // The bot is told plainly that Claude Desktop can't be woken and the user was asked: not stuck.
+    let note = r["waiting_on_user"].as_str().unwrap_or_else(|| panic!("{r}"));
+    assert!(note.contains("can't be woken automatically") && note.contains("Sorry"), "{note}");
     let (r, _) = tool(&core, &bot, &home, "mux_ask_peer", json!({"to": "claude-desktop", "question": "Director asks: does make.py render all shots?", "wait_s": 0})).await.unwrap();
     assert!(r["ticket"].is_string(), "second question queues behind the first: {r}");
     assert_eq!(v.open_tickets_between(&bot, "claude-desktop").unwrap(), 2);
@@ -58,6 +61,7 @@ async fn a_bot_asking_back_stays_in_the_conversation() {
     }
     let err = tool(&core, &bot, &home, "mux_ask_peer", json!({"to": "claude-desktop", "question": "one too many", "wait_s": 0})).await.unwrap_err();
     assert!(err.contains("10 questions waiting"), "{err}");
+    assert!(core.inbox_only_note("claude").is_none(), "agents that get woken don't need the user");
     let t = core.start_ticket_in(&ctx(&bot, &home), None, None, "claude", "Woken agent?", None).unwrap();
     assert!(core.start_ticket_in(&ctx(&bot, &home), None, None, "claude", "Again?", None).unwrap_err().to_string().contains("already has an open question"));
     core.finish(&t, "answered", "ok", None).unwrap();
