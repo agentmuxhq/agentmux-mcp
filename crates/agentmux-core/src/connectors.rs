@@ -22,6 +22,12 @@ pub fn stable_target(exe: &Path) -> (PathBuf, bool) {
     (exe.to_path_buf(), false)
 }
 
+/// Built by cargo in a checkout (`target/debug`, `target/release`), not an installed copy.
+pub fn is_dev_build(exe: &Path) -> bool {
+    let s = exe.to_string_lossy();
+    s.contains("/target/debug/") || s.contains("/target/release/") || s.contains("/target/aarch64-apple-darwin/") || s.contains("/target/x86_64-apple-darwin/")
+}
+
 pub fn ensure_bin_link() -> Result<PathBuf> {
     let mut exe = std::env::current_exe()?;
     // Inside the desktop app, current_exe() is the GUI; the stdio shim is the sibling `agentmux` CLI.
@@ -33,6 +39,16 @@ pub fn ensure_bin_link() -> Result<PathBuf> {
     }
     let link = config::bin_link();
     std::fs::create_dir_all(config::bin_dir())?;
+    // A development build (cargo's target/ folder) never takes the link from a real install: the
+    // background service and every agent would run an unsigned build that can't read the Keychain.
+    // AGENTMUX_DEV_LINK=1 lets it, for testing the dev build end to end.
+    if is_dev_build(&exe) && std::env::var("AGENTMUX_DEV_LINK").as_deref() != Ok("1") {
+        if let Ok(cur) = std::fs::canonicalize(&link) {
+            if cur.is_file() && !is_dev_build(&cur) {
+                return Ok(link);
+            }
+        }
+    }
     let (target, copy) = stable_target(&exe);
     if copy {
         // Copy then rename, so a running daemon using the old file is never left with a half-written one.

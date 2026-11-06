@@ -189,3 +189,13 @@ fn claude_desktop_registers_in_the_app_config_and_waits_in_its_inbox() {
     let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(v["preferences"]["theme"], "dark");
 }
+
+#[test]
+fn dev_builds_never_take_the_cli_link_from_an_install() {
+    use agentmux_core::connectors::is_dev_build;
+    use std::path::Path;
+    assert!(is_dev_build(Path::new("/Users/x/Projects/agentmux-mcp/target/debug/agentmux")));
+    assert!(is_dev_build(Path::new("/Users/x/agentmux-mcp/target/release/agentmux")));
+    assert!(!is_dev_build(Path::new("/Applications/AgentMux.app/Contents/MacOS/agentmux")));
+    assert!(!is_dev_build(Path::new("/opt/homebrew/Cellar/agentmux/1.0.5/bin/agentmux")));
+}
