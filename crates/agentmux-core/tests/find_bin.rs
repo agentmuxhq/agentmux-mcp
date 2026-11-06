@@ -34,7 +34,7 @@ fn finds_clis_installed_by_node_managers() {
 fn signed_out_wakes_say_how_to_sign_in() {
     use agentmux_core::wakers::login_hint;
     let h = login_hint("claude", "/Users/x/.local/bin/claude", "Failed to authenticate: OAuth session expired and could not be refreshed").unwrap();
-    assert!(h.contains("/login") && h.contains("@claude"), "{h}");
+    assert!(h.contains("claude auth login") && h.contains("@claude"), "{h}");
     assert!(login_hint("chatgpt", "/opt/homebrew/bin/codex", "Error: not logged in").unwrap().contains("codex login"));
     assert!(login_hint("claude", "/x/claude", "Error: rate limited, try later").is_none());
 }

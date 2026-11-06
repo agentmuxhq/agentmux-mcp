@@ -364,6 +364,21 @@ fn merge_rooms(state: State<'_, AppState>, from: String, into: String) -> Result
     state.core.merge_rooms(&from, &into, "user").map_err(err)
 }
 
+/// Open Terminal with the agent's CLI sign-in command running (its login expired, so wakes fail).
+/// Signing in needs the user's browser, so AgentMux only starts it; returns what to do next.
+#[tauri::command]
+fn open_login(agent: String) -> Result<String, String> {
+    let (bin, args, next) = agentmux_core::wakers::login_command(&agent).ok_or_else(|| format!("AgentMux doesn't know how to sign @{agent} in; sign in to its CLI in Terminal."))?;
+    let sh = |x: &str| format!("'{}'", x.replace('\'', "'\\''"));
+    let line = std::iter::once(sh(&bin.to_string_lossy())).chain(args.iter().map(|a| sh(a))).collect::<Vec<_>>().join(" ");
+    let script = format!("tell application \"Terminal\"\nactivate\ndo script \"{}\"\nend tell", line.replace('\\', "\\\\").replace('"', "\\\""));
+    let st = std::process::Command::new("osascript").arg("-e").arg(&script).status().map_err(err)?;
+    if !st.success() {
+        return Err("couldn't open Terminal".into());
+    }
+    Ok(format!("Terminal opened with `{line}`. There, {next}. Then send the test ping again."))
+}
+
 /// Delete a room for good (threads, messages, questions, attachments). The app confirms first.
 #[tauri::command]
 fn delete_room(state: State<'_, AppState>, room: String) -> Result<(), String> {
@@ -989,6 +1004,7 @@ pub fn run() {
             new_session,
             rename_room,
             delete_room,
+            open_login,
             merge_rooms,
             rename_session,
             set_context,

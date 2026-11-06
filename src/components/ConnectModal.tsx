@@ -26,6 +26,12 @@ interface Props {
   onChanged: () => void;
 }
 
+// A wake that failed because the agent's CLI is signed out (same words AgentMux's core checks).
+const signedOut = (t: string) =>
+  /failed to authenticate|oauth|not logged in|please log ?in|\/login|invalid api key|unauthenticated|authentication required|login required|\b401\b|login has expired/i.test(
+    t,
+  );
+
 export default function ConnectModal({
   ov,
   initial = "cursor",
@@ -665,6 +671,46 @@ export default function ConnectModal({
                   >
                     {reply.text}
                   </pre>
+                )}
+                {reply?.status === "failed" && signedOut(reply.text) && (
+                  <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+                    <div className="mb-1 font-semibold text-amber-200">
+                      {meta.name} is signed out
+                    </div>
+                    <div className="mb-2 leading-relaxed text-zinc-400">
+                      Its command-line login expired, so AgentMux can&apos;t
+                      wake it (the app you chat in may still work: it has its
+                      own login). Sign in once in Terminal, then send the test
+                      ping again.
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        className={btnPrimary}
+                        onClick={() =>
+                          api
+                            .openLogin(target)
+                            .then((t) => setMsg({ ok: true, text: t }))
+                            .catch((e) => setMsg({ ok: false, text: `${e}` }))
+                        }
+                      >
+                        Sign in…
+                      </button>
+                      <button
+                        className={btn}
+                        disabled={busy}
+                        onClick={async () => {
+                          setMsg(null);
+                          try {
+                            setTicket(await api.ping(target));
+                          } catch (e) {
+                            setMsg({ ok: false, text: `${e}` });
+                          }
+                        }}
+                      >
+                        <Radio size={13} /> Test again
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
             )}

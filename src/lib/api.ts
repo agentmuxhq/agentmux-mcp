@@ -390,6 +390,7 @@ export const api = {
   mergeRooms: (from: string, into: string) =>
     call<void>("merge_rooms", { from, into }),
   deleteRoom: (room: string) => call<void>("delete_room", { room }),
+  openLogin: (agent: string) => call<string>("open_login", { agent }),
   renameSession: (session: string, title: string) =>
     call<void>("rename_session", { session, title }),
   setContext: (

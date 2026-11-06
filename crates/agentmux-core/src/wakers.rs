@@ -116,25 +116,51 @@ pub async fn run_wake(
     Ok(stdout)
 }
 
+/// How to sign a CLI back in: (arguments to run it with, what the user does next). Keyed by the
+/// binary's file name; None when AgentMux doesn't know that CLI.
+fn login_steps(cli: &str) -> Option<(Vec<&'static str>, &'static str)> {
+    Some(match cli {
+        "claude" => (vec!["auth", "login"], "finish signing in in your browser"),
+        "codex" => (vec!["login"], "finish signing in in your browser"),
+        "gemini" => (vec![], "pick a sign-in method when it asks, and finish in your browser"),
+        "cursor-agent" | "agent" => (vec!["login"], "finish signing in in your browser"),
+        _ => return None,
+    })
+}
+
+fn cli_name(bin: &str) -> String {
+    std::path::Path::new(bin).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default()
+}
+
+/// Does this wake output mean the agent's CLI is signed out?
+pub fn is_signed_out(output: &str) -> bool {
+    let o = output.to_lowercase();
+    ["failed to authenticate", "oauth", "not logged in", "please log in", "please login", "/login", "invalid api key", "unauthenticated", "authentication required", "login required", "401"]
+        .iter()
+        .any(|k| o.contains(k))
+}
+
 /// A wake that failed because the agent's CLI is signed out: say how to sign back in, since only
 /// the user can (it needs their browser). None for other failures.
 pub fn login_hint(agent: &str, bin: &str, output: &str) -> Option<String> {
-    let o = output.to_lowercase();
-    let signed_out = ["failed to authenticate", "oauth", "not logged in", "please log in", "please login", "/login", "invalid api key", "unauthenticated", "authentication required", "login required", "401"]
-        .iter()
-        .any(|k| o.contains(k));
-    if !signed_out {
+    if !is_signed_out(output) {
         return None;
     }
-    let cli = std::path::Path::new(bin).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_else(|| agent.to_string());
-    let how = match cli.as_str() {
-        "claude" => "open Terminal, run `claude`, type /login and finish signing in in your browser".to_string(),
-        "codex" => "open Terminal and run `codex login`".to_string(),
-        "gemini" => "open Terminal, run `gemini` and sign in when it asks".to_string(),
-        "cursor-agent" | "agent" => format!("open Terminal and run `{cli} login`"),
-        _ => format!("sign in to `{cli}` again in Terminal"),
+    let cli = cli_name(bin);
+    let how = match login_steps(&cli) {
+        Some((args, next)) => format!("open Terminal, run `{}`, then {next}", std::iter::once(cli.as_str()).chain(args).collect::<Vec<_>>().join(" ")),
+        None => format!("sign in to `{cli}` again in Terminal"),
     };
-    Some(format!("@{agent}'s command-line login has expired, so AgentMux can't wake it. To fix: {how}. Then send the test ping again."))
+    Some(format!("@{agent}'s command-line login has expired, so AgentMux can't wake it. To fix: {how}. Then send the test ping again. (In the app: Edit {agent} → Sign in.)"))
+}
+
+/// The command that signs `agent`'s CLI back in, for the app's "Sign in" button: (binary, args,
+/// what the user does next in the Terminal window it opens).
+pub fn login_command(agent: &str) -> Option<(std::path::PathBuf, Vec<String>, String)> {
+    let p = crate::providers::get(agent)?;
+    let spec = p.wake(&crate::providers::WakeRequest { prompt: "", workspace: "/", allow_edits: false, ticket: "" })?;
+    let (args, next) = login_steps(&cli_name(&spec.bin.to_string_lossy()))?;
+    Some((spec.bin, args.into_iter().map(String::from).collect(), next.to_string()))
 }
 
 /// Terminal colour codes (ESC [ … letter) out of a CLI's output, so errors read cleanly in the app.
