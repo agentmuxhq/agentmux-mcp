@@ -242,6 +242,19 @@ fn set_app_setting(state: State<'_, AppState>, key: String, value: String) -> Re
     state.core.vault.set_setting(&key, &value).map_err(err)
 }
 
+/// Questions still open, from the vault (the source of truth: another AgentMux process may be
+/// the one answering them, and its events don't reach this window).
+#[tauri::command]
+fn open_tickets(state: State<'_, AppState>) -> Result<Value, String> {
+    Ok(json!(state.core.vault.open_tickets().map_err(err)?))
+}
+
+/// One ticket's status and answer.
+#[tauri::command]
+fn ticket_status(state: State<'_, AppState>, id: String) -> Result<Value, String> {
+    Ok(state.core.vault.ticket(&id).map_err(err)?.unwrap_or(Value::Null))
+}
+
 #[tauri::command]
 fn engines_status(state: State<'_, AppState>) -> Value {
     agentmux_core::engines::status(&state.core.vault)
@@ -952,6 +965,8 @@ pub fn run() {
             send_message,
             ask_all,
             engines_status,
+            open_tickets,
+            ticket_status,
             get_app_setting,
             set_app_setting,
             engines_configure,

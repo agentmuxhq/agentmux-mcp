@@ -56,7 +56,26 @@ export default function ConnectModal({ ov, initial = "cursor", startAdding, repl
   // Remote providers (Grok) are added in their own app's settings, not by AgentMux.
   const manual = !!cat?.remoteAccess;
   const handshake = !!p?.connectedAt;
-  const reply = ticket ? replies[ticket] : undefined;
+  // The ping's answer: from this window's events, or by polling the vault when another AgentMux
+  // process (the background service) is the one handling it.
+  const [polled, setPolled] = useState<{ status: string; text: string } | undefined>(undefined);
+  useEffect(() => {
+    setPolled(undefined);
+    if (!ticket) return;
+    const t = setInterval(() => {
+      api
+        .ticketStatus(ticket)
+        .then((v) => {
+          if (v && (v.status === "answered" || v.status === "failed")) {
+            setPolled({ status: v.status, text: v.answer ?? "" });
+            clearInterval(t);
+          }
+        })
+        .catch(() => {});
+    }, 2000);
+    return () => clearInterval(t);
+  }, [ticket]);
+  const reply = ticket ? (replies[ticket] ?? polled) : undefined;
   const meta = agentMeta(target);
 
   const run = async (fn: () => Promise<string>, label: string) => {

@@ -168,6 +168,11 @@ export default function App() {
     const t = setInterval(() => {
       refresh();
       loadMessages();
+      // "Working on…" follows the vault, so questions answered by another AgentMux process clear.
+      api
+        .openTickets()
+        .then((open) => setRunning(Object.fromEntries(open.map((o) => [o.id, { from: o.from, to: o.to }]))))
+        .catch(() => {});
     }, 2500);
     return () => clearInterval(t);
   }, [refresh, loadMessages]);
@@ -303,8 +308,9 @@ export default function App() {
           </div>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-2">
-          <div className="mb-1 flex items-center justify-between px-2 pt-1">
+        <div className="flex min-h-0 flex-1 flex-col">
+          <div className="max-h-[45%] shrink-0 overflow-y-auto px-2 pb-2">
+          <div className="sticky top-0 z-10 -mx-2 mb-1 flex items-center justify-between bg-[#121212] px-4 pb-1 pt-1">
             <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Providers</span>
             <button onClick={() => (setConnectInit({}), setShowConnect(true))} className="rounded p-1 text-zinc-400 hover:bg-white/10 hover:text-white" title="Connect a provider">
               <Plus size={14} />
@@ -335,7 +341,9 @@ export default function App() {
             Add Grok bot
           </button>
 
-          <div className="mb-1 mt-4 flex items-center justify-between px-2">
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto border-t border-white/5 px-2">
+            <div className="sticky top-0 z-10 -mx-2 mb-1 flex items-center justify-between bg-[#121212] px-4 pb-1 pt-3">
             <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Bridge rooms</span>
             <button onClick={() => setShowNewRoom(true)} className="rounded p-1 text-zinc-400 hover:bg-white/10 hover:text-white" title="Add a workspace">
               <Plus size={14} />
@@ -373,6 +381,7 @@ export default function App() {
               </div>
             </button>
           ))}
+          </div>
         </div>
 
         <UpdateRow />
