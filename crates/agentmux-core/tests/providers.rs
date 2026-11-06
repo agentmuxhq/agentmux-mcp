@@ -51,7 +51,10 @@ fn registry_and_golden_wake_args() {
     assert_eq!(args("claude", true).unwrap(), ["-p", "P", "--permission-mode", "acceptEdits"]);
     assert_eq!(args("chatgpt", false).unwrap(), ["exec", "-s", "read-only", "--skip-git-repo-check", "--ephemeral", "-C", "/ws", "P"]);
     assert_eq!(args("chatgpt", true).unwrap()[2], "workspace-write");
-    assert_eq!(args("gemini", false).unwrap(), ["-p", "P", "--skip-trust", "--approval-mode", "plan", "--output-format", "text"]);
+    let g = args("gemini", false).unwrap();
+    assert_eq!(g[..7], ["-p", "P", "--skip-trust", "--approval-mode", "plan", "--output-format", "text"]);
+    assert_eq!(g[7], "--session-id");
+    assert!(g[8].starts_with(providers::chat_hook::WAKE_SESSION_PREFIX) && g[8].len() == 36, "a UUID marked as AgentMux's: {}", g[8]);
     assert_eq!(args("gemini", true).unwrap()[4], "auto_edit");
     assert!(args("grok", false).is_none(), "Grok is woken by webhook, not a CLI");
 }

@@ -6,6 +6,16 @@
 
 use super::*;
 
+/// Session ids AgentMux gives the headless runs it starts (where the client lets us choose one,
+/// like Gemini CLI's `--session-id`). Clients that sanitize hook environments (Gemini) hide
+/// AGENTMUX_TICKET from the hook, so this prefix is how a hook recognises AgentMux's own runs.
+pub const WAKE_SESSION_PREFIX: &str = "a6e7c0de-";
+
+/// A fresh session id marked as an AgentMux wake.
+pub fn wake_session_id() -> String {
+    format!("{WAKE_SESSION_PREFIX}{}", &uuid::Uuid::new_v4().to_string()[9..])
+}
+
 /// How one client wires its hooks.
 pub struct HookSpec {
     /// AgentMux agent id ("claude", "gemini").
@@ -108,6 +118,10 @@ impl HookEvent {
 /// Run by the hook: remember which Claude chat is active in which folder (so questions it asks go
 /// to that chat's AgentMux thread), then return what to add to Claude's context, if anything.
 pub fn on_hook(spec: &HookSpec, vault: &crate::Vault, ev: &HookEvent) -> Result<Option<String>> {
+    // AgentMux's own headless run: don't record it as a chat, and don't consume the user's updates.
+    if ev.chat.as_deref().is_some_and(|c| c.starts_with(WAKE_SESSION_PREFIX)) {
+        return Ok(None);
+    }
     let mut lead = String::new();
     if let (Some(chat), Some(cwd)) = (&ev.chat, &ev.cwd) {
         let root = crate::context::workspace_root(Path::new(cwd));

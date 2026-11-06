@@ -77,7 +77,12 @@ impl Provider for Gemini {
             bin: find_bin("gemini")?,
             // --skip-trust: headless runs refuse untrusted folders, and an untrusted folder would also
             // silently turn plan (read-only) mode back into default. It trusts the folder for this run only.
-            args: vec![s("-p"), s(r.prompt), s("--skip-trust"), s("--approval-mode"), s(if r.allow_edits { "auto_edit" } else { "plan" }), s("--output-format"), s("text")],
+            // --session-id: marked as AgentMux's run, so the chat hook (which can't see our env)
+            // stays out of it.
+            args: vec![
+                s("-p"), s(r.prompt), s("--skip-trust"), s("--approval-mode"), s(if r.allow_edits { "auto_edit" } else { "plan" }),
+                s("--output-format"), s("text"), s("--session-id"), chat_hook::wake_session_id(),
+            ],
         })
     }
 }

@@ -135,6 +135,11 @@ async fn group_threads_media_and_claude_chats() {
     let ask = core.start_ticket_in(&ctx("claude", &ws), None, Some(&gem_thread), "gemini", "Can you double-check frame 12?", None).unwrap();
     let text = chat_hook::on_hook(&gemini::HOOK, v, &g).unwrap().unwrap();
     assert!(text.contains("frame 12") && text.contains(&ask), "{text}");
+    // Inside AgentMux's own headless Gemini run (marked session id): no recording, no updates consumed.
+    core.start_ticket_in(&ctx("cursor", &ws), None, Some(&gem_thread), "gemini", "One more check?", None).unwrap();
+    let wake = chat_hook::HookEvent { event: "BeforeAgent".into(), chat: Some(chat_hook::wake_session_id()), cwd: Some(ws.to_string_lossy().into()) };
+    assert!(chat_hook::on_hook(&gemini::HOOK, v, &wake).unwrap().is_none());
+    assert!(chat_hook::on_hook(&gemini::HOOK, v, &g).unwrap().unwrap().contains("One more check?"), "still waiting for the real chat");
     let start = chat_hook::HookEvent { event: "SessionStart".into(), ..g.clone() };
     assert!(chat_hook::on_hook(&gemini::HOOK, v, &start).unwrap().unwrap().contains("Gemini review"));
 }
