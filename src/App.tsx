@@ -773,8 +773,19 @@ export default function App() {
           <div className="border-t border-white/10 px-6 py-2 text-xs text-amber-300">
             {myRunning.map(([id, t]) => (
               <div key={id} className="flex items-center gap-2">
-                <Dot on={false} pulse /> @{t.to} is working on @{t.from}&apos;s
-                question… <span className="font-mono text-zinc-600">{id}</span>
+                <Dot on={false} pulse />
+                {ov.providers.find((x) => x.id === t.to)?.wakeKind ===
+                "inbox" ? (
+                  <>
+                    @{t.from}&apos;s question is waiting in @{t.to}&apos;s inbox
+                    until it&apos;s next used…
+                  </>
+                ) : (
+                  <>
+                    @{t.to} is working on @{t.from}&apos;s question…
+                  </>
+                )}{" "}
+                <span className="font-mono text-zinc-600">{id}</span>
               </div>
             ))}
           </div>

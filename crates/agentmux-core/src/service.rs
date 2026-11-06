@@ -65,6 +65,34 @@ pub async fn run_headless(core: Arc<Core>) -> Result<()> {
         }
     });
 
+    // Updated in place (the app update replaces the binary): restart onto the new version, or the
+    // service keeps running old code until the next login. Only under launchd, which brings it back.
+    if std::env::var("XPC_SERVICE_NAME").as_deref() == Ok("dev.agentmux.daemon") {
+        let c = core.clone();
+        tokio::spawn(async move {
+            let Some(exe) = std::env::current_exe().ok() else { return };
+            let stamp = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+            let started = stamp(&exe);
+            loop {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                let now = stamp(&exe);
+                if now.is_none() || now == started {
+                    continue; // mid-replace, or unchanged
+                }
+                // Let running wakes finish (up to 10 minutes); questions waiting in inboxes are kept.
+                for _ in 0..60 {
+                    let busy = c.vault.open_tickets().map(|t| t.iter().any(|x| x["status"] == "running")).unwrap_or(false);
+                    if !busy {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_secs(10)).await;
+                }
+                tracing::info!("AgentMux was updated; restarting the service on the new version");
+                std::process::exit(75); // non-zero: launchd's KeepAlive starts the new binary
+            }
+        });
+    }
+
     // Turned off (`agentmux stop`, or the app's menu bar): take the tunnel down and exit cleanly.
     let (tx, rx) = watch::channel(false);
     let g = gw.clone();
