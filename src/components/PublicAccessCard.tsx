@@ -4,30 +4,61 @@ import { api, onMuxEvent, type Gateway } from "../lib/api";
 import { Badge, Dot } from "./ui";
 
 /** Status summary of the tunnel that lets cloud agents (Grok) reach this Mac. */
-export default function PublicAccessCard({ onManage }: { onManage: () => void }) {
+export default function PublicAccessCard({
+  onManage,
+}: {
+  onManage: () => void;
+}) {
   const [gw, setGw] = useState<Gateway | null>(null);
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    api.gatewayStatus().then(setGw).catch(() => {});
-    const off = onMuxEvent((e) => e.kind === "tunnel" && setGw(e.data as Gateway));
+    api
+      .gatewayStatus()
+      .then(setGw)
+      .catch(() => {});
+    const off = onMuxEvent(
+      (e) => e.kind === "tunnel" && setGw(e.data as Gateway),
+    );
     return () => void off.then((f) => f());
   }, []);
   if (!gw) return null;
 
   const running = gw.state === "running";
-  const host = gw.url?.replace("https://", "") ?? (gw.provider === "ngrok" ? gw.ngrokDomain : gw.cfHostname);
+  const host =
+    gw.url?.replace("https://", "") ??
+    (gw.provider === "ngrok" ? gw.ngrokDomain : gw.cfHostname);
   const kind = gw.provider === "ngrok" ? "ngrok" : "Cloudflare";
-  const mode = gw.permanent ? (gw.verified ? "permanent · verified" : "permanent · not verified") : "temporary";
-  const tone = gw.state === "error" ? "red" : running ? (gw.permanent && !gw.verified ? "amber" : "green") : gw.state === "starting" ? "amber" : "zinc";
+  const mode = gw.permanent
+    ? gw.verified
+      ? "permanent · verified"
+      : "permanent · not verified"
+    : "temporary";
+  const tone =
+    gw.state === "error"
+      ? "red"
+      : running
+        ? gw.permanent && !gw.verified
+          ? "amber"
+          : "green"
+        : gw.state === "starting"
+          ? "amber"
+          : "zinc";
 
   return (
     <div className="rounded-lg border border-white/10 p-3">
       <div className="mb-2 flex items-center gap-2">
         <Dot on={running} pulse={gw.state === "starting"} />
-        <span className="font-display text-sm font-semibold">Public access</span>
-        <Badge tone={tone}>{running ? "online" : gw.state === "stopped" ? "off" : gw.state}</Badge>
-        <button onClick={onManage} className="ml-auto text-[11px] text-zinc-500 underline underline-offset-2 hover:text-zinc-300">
+        <span className="font-display text-sm font-semibold">
+          Public access
+        </span>
+        <Badge tone={tone}>
+          {running ? "online" : gw.state === "stopped" ? "off" : gw.state}
+        </Badge>
+        <button
+          onClick={onManage}
+          className="ml-auto text-[11px] text-zinc-500 underline underline-offset-2 hover:text-zinc-300"
+        >
           manage
         </button>
       </div>
@@ -37,7 +68,10 @@ export default function PublicAccessCard({ onManage }: { onManage: () => void })
         {gw.mcpUrl && (
           <div className="flex items-center gap-2">
             <span className="w-14 shrink-0 text-zinc-500">MCP</span>
-            <span className="min-w-0 flex-1 select-text truncate font-mono text-zinc-300" title={gw.mcpUrl}>
+            <span
+              className="min-w-0 flex-1 select-text truncate font-mono text-zinc-300"
+              title={gw.mcpUrl}
+            >
               {gw.mcpUrl}
             </span>
             <button
@@ -54,9 +88,17 @@ export default function PublicAccessCard({ onManage }: { onManage: () => void })
             </button>
           </div>
         )}
-        <Row k="Local" v={`http://${gw.http ?? `127.0.0.1:${gw.port}`}/mcp`} mono />
+        <Row
+          k="Local"
+          v={`http://${gw.http ?? `127.0.0.1:${gw.port}`}/mcp`}
+          mono
+        />
         {gw.error && <div className="text-red-300">{gw.error}</div>}
-        {running && !gw.permanent && <div className="text-amber-300/80">Temporary URL: it changes when the tunnel restarts.</div>}
+        {running && !gw.permanent && (
+          <div className="text-amber-300/80">
+            Temporary URL: it changes when the tunnel restarts.
+          </div>
+        )}
       </div>
     </div>
   );
@@ -66,7 +108,10 @@ function Row({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
   return (
     <div className="flex gap-2">
       <span className="w-14 shrink-0 text-zinc-500">{k}</span>
-      <span className={`min-w-0 flex-1 truncate ${mono ? "font-mono" : ""} text-zinc-300`} title={v}>
+      <span
+        className={`min-w-0 flex-1 truncate ${mono ? "font-mono" : ""} text-zinc-300`}
+        title={v}
+      >
         {v}
       </span>
     </div>

@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { ago, api, type Overview } from "../lib/api";
 import { Avatar, Modal, btn } from "./ui";
+import { ask } from "./Dialogs";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -44,9 +45,12 @@ export default function CleanupRoomsModal({
       .map((r) => `• ${r.title} (${r.sessions.length} threads)`)
       .join("\n");
     if (
-      !window.confirm(
-        `Delete ${chosen.length} room${chosen.length > 1 ? "s" : ""} for good?\n\n${list}\n\nTheir threads, messages, questions and attachments are erased and can't be brought back. To keep the history, use "Merge into…" instead.`,
-      )
+      !(await ask({
+        title: `Delete ${chosen.length} room${chosen.length > 1 ? "s" : ""}?`,
+        confirm: "Delete for good",
+        danger: true,
+        message: `${list}\n\nTheir threads, messages, questions and attachments are erased and can't be brought back. To keep the history, use "Merge into…" instead.`,
+      }))
     )
       return;
     setBusy(true);

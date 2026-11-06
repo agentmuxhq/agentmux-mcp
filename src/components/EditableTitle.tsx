@@ -45,7 +45,11 @@ export default function EditableTitle({
       />
     );
   return (
-    <span className={className} title={title} onDoubleClick={(e) => (e.stopPropagation(), setEditing(true))}>
+    <span
+      className={className}
+      title={title}
+      onDoubleClick={(e) => (e.stopPropagation(), setEditing(true))}
+    >
       {value}
     </span>
   );

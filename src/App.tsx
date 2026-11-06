@@ -47,6 +47,7 @@ import {
 import { UpdateRow } from "./components/UpdateControls";
 import PublicAccessCard from "./components/PublicAccessCard";
 import SettingsModal from "./components/SettingsModal";
+import { DialogHost, ask, promptText } from "./components/Dialogs";
 
 type RightTab = "details" | "memory" | "context" | "status";
 type Reply = { status: string; text: string };
@@ -393,15 +394,23 @@ export default function App() {
   /** Rename an agent, after saying what that changes. Its @id (and so every address) stays. */
   const renameProvider = async (id: string) => {
     const current = agentMeta(id).name;
-    const next = window.prompt(`Rename ${current} (@${id})`, current)?.trim();
+    const next = await promptText({
+      title: `Rename ${current}`,
+      message: `New name for @${id}:`,
+      initial: current,
+      confirm: "Next",
+    });
     if (!next || next === current) return;
-    const ok = window.confirm(
-      `Rename "${current}" to "${next}"?\n\n` +
+    const ok = await ask({
+      title: "Rename for everyone?",
+      confirm: "Rename",
+      message:
+        `Rename "${current}" to "${next}"?\n\n` +
         `• Everyone sees the new name: this app, and every agent that has worked with it (they get a notice).\n` +
         `• The agent itself is told its new name${isGrok(id) ? " (Grok bots are woken by webhook to hear it)" : ""}.\n` +
         `• Its address @${id} doesn't change, so nothing that asks it breaks.\n\n` +
         `Names are unique: this fails if another agent already uses it.`,
-    );
+    });
     if (!ok) return;
     try {
       await api.renameAgent(id, next);
@@ -633,9 +642,11 @@ export default function App() {
                     const into = ov.rooms.find((r) => r.id === e.target.value);
                     if (
                       !into ||
-                      !window.confirm(
-                        `Merge "${room.title}" into "${into.title}"?\n\nIts threads, messages and folders move to "${into.title}", and "${room.title}" disappears. Everyone in it is told.`,
-                      )
+                      !(await ask({
+                        title: "Merge rooms?",
+                        confirm: "Merge",
+                        message: `Merge "${room.title}" into "${into.title}"?\n\nIts threads, messages and folders move to "${into.title}", and "${room.title}" disappears. Everyone in it is told.`,
+                      }))
                     )
                       return;
                     await api
@@ -659,15 +670,14 @@ export default function App() {
                 className={`${btn} ${ov.rooms.length > 1 ? "" : "ml-auto"}`}
                 title="Delete this room for good"
                 onClick={async () => {
-                  const typed = window.prompt(
-                    `Delete "${room.title}" for good?\n\nIts ${room.sessions.length} thread(s), messages, questions and attachments are erased and can't be brought back. Agents in it are told. To keep the history, use "Merge into…" instead.\n\nType the room name to confirm:`,
-                    "",
-                  );
+                  const typed = await promptText({
+                    title: `Delete "${room.title}"?`,
+                    message: `Its ${room.sessions.length} thread(s), messages, questions and attachments are erased for good and can't be brought back. Agents in it are told. To keep the history, use "Merge into…" instead.\n\nType the room name to confirm:`,
+                    mustMatch: room.title,
+                    confirm: "Delete room",
+                    danger: true,
+                  });
                   if (typed === null) return;
-                  if (typed.trim() !== room.title) {
-                    setError("Room not deleted: the name didn't match.");
-                    return;
-                  }
                   await api
                     .deleteRoom(room.id)
                     .then(() =>
@@ -684,10 +694,13 @@ export default function App() {
               <button
                 className={btn}
                 onClick={async () => {
-                  const name = window.prompt(
-                    "What is this session about? (e.g. Release plan, QA). Agents asking about the same topic land here.",
-                    "",
-                  );
+                  const name = await promptText({
+                    title: "New session",
+                    message:
+                      "What is this session about? (e.g. Release plan, QA). Agents asking about the same topic land here.",
+                    placeholder: "Topic",
+                    confirm: "Create",
+                  });
                   if (name === null) return;
                   const id = await api
                     .newSession(room.id, name)
@@ -1241,6 +1254,7 @@ export default function App() {
         </div>
       </aside>
 
+      <DialogHost />
       {showCleanup && (
         <CleanupRoomsModal
           ov={ov}

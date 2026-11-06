@@ -6,7 +6,8 @@ import EnginesPanel from "./EnginesPanel";
 import TunnelPanel from "./TunnelPanel";
 import { UpdateSettings } from "./UpdateControls";
 
-export type Section = "daemon" | "access" | "engines" | "sync" | "vault" | "inspector";
+export type Section =
+  "daemon" | "access" | "engines" | "sync" | "vault" | "inspector";
 
 function Row({ k, v }: { k: string; v: string }) {
   return (
@@ -33,7 +34,13 @@ function Vault() {
   useEffect(() => {
     load().catch(() => {});
   }, []);
-  if (!files.length) return <div className="text-xs text-zinc-500">No thread files yet. They appear in ~/.agentmux/threads once agents talk.</div>;
+  if (!files.length)
+    return (
+      <div className="text-xs text-zinc-500">
+        No thread files yet. They appear in ~/.agentmux/threads once agents
+        talk.
+      </div>
+    );
   return (
     <div className="flex gap-4">
       <div className="w-52 shrink-0 space-y-1">
@@ -91,7 +98,10 @@ function Inspector() {
   const schema = tools.find((t) => t.name === tool)?.inputSchema;
   return (
     <div className="space-y-3 text-xs">
-      <div className="text-zinc-500">Calls the in-process MCP server as the human user — the same code path the agents hit.</div>
+      <div className="text-zinc-500">
+        Calls the in-process MCP server as the human user — the same code path
+        the agents hit.
+      </div>
       <select
         value={tool}
         onChange={(e) => {
@@ -106,7 +116,11 @@ function Inspector() {
           </option>
         ))}
       </select>
-      {schema && <pre className="select-text overflow-x-auto rounded bg-black/40 p-2 font-mono text-[10px] text-zinc-500">{JSON.stringify(schema.properties)}</pre>}
+      {schema && (
+        <pre className="select-text overflow-x-auto rounded bg-black/40 p-2 font-mono text-[10px] text-zinc-500">
+          {JSON.stringify(schema.properties)}
+        </pre>
+      )}
       <textarea
         value={args}
         onChange={(e) => setArgs(e.target.value)}
@@ -119,7 +133,12 @@ function Inspector() {
         onClick={async () => {
           setBusy(true);
           try {
-            const r = await api.mcp({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: tool, arguments: JSON.parse(args || "{}") } });
+            const r = await api.mcp({
+              jsonrpc: "2.0",
+              id: 2,
+              method: "tools/call",
+              params: { name: tool, arguments: JSON.parse(args || "{}") },
+            });
             setOut(r?.result?.content?.[0]?.text ?? JSON.stringify(r, null, 2));
           } catch (e) {
             setOut(`error: ${e}`);
@@ -130,12 +149,24 @@ function Inspector() {
       >
         {busy ? "Running…" : "Run tool"}
       </button>
-      {out && <pre className="max-h-64 select-text overflow-auto whitespace-pre-wrap rounded bg-black/40 p-3 font-mono text-[11px] text-zinc-200">{out}</pre>}
+      {out && (
+        <pre className="max-h-64 select-text overflow-auto whitespace-pre-wrap rounded bg-black/40 p-3 font-mono text-[11px] text-zinc-200">
+          {out}
+        </pre>
+      )}
     </div>
   );
 }
 
-export default function SettingsModal({ ov, onClose, initial = "daemon" }: { ov: Overview; onClose: () => void; initial?: Section }) {
+export default function SettingsModal({
+  ov,
+  onClose,
+  initial = "daemon",
+}: {
+  ov: Overview;
+  onClose: () => void;
+  initial?: Section;
+}) {
   const [sec, setSec] = useState<Section>(initial);
   useEffect(() => setSec(initial), [initial]);
   const tabs: [Section, string][] = [
@@ -150,7 +181,11 @@ export default function SettingsModal({ ov, onClose, initial = "daemon" }: { ov:
     <Modal title="Settings" onClose={onClose} wide>
       <div className="mb-4 flex gap-1">
         {tabs.map(([id, label]) => (
-          <button key={id} onClick={() => setSec(id)} className={`rounded-md px-3 py-1.5 text-xs ${sec === id ? "bg-white/10" : "text-zinc-400 hover:bg-white/5"}`}>
+          <button
+            key={id}
+            onClick={() => setSec(id)}
+            className={`rounded-md px-3 py-1.5 text-xs ${sec === id ? "bg-white/10" : "text-zinc-400 hover:bg-white/5"}`}
+          >
             {label}
           </button>
         ))}
@@ -158,19 +193,45 @@ export default function SettingsModal({ ov, onClose, initial = "daemon" }: { ov:
       {sec === "daemon" && (
         <div>
           <div className="mb-3 flex items-center gap-2 text-xs">
-            Daemon <Badge tone={ov.daemon.startsWith("error") ? "red" : ov.daemon === "off" ? "zinc" : "green"}>{ov.daemon}</Badge>
+            Daemon{" "}
+            <Badge
+              tone={
+                ov.daemon.startsWith("error")
+                  ? "red"
+                  : ov.daemon === "off"
+                    ? "zinc"
+                    : "green"
+              }
+            >
+              {ov.daemon}
+            </Badge>
           </div>
-          <Row k="Transport" v="Unix socket (0600) — one stdio shim per agent" />
+          <Row
+            k="Transport"
+            v="Unix socket (0600) — one stdio shim per agent"
+          />
           <Row k="Socket" v={ov.socket} />
           <Row k="Vault" v={ov.home} />
-          <Row k="Shim command" v={`${ov.home}/bin/agentmux mcp --agent <id>`} />
-          <Row k="HTTP gateway" v="127.0.0.1:4317/mcp (bearer token; only reachable from outside through a tunnel you start)" />
-          <Row k="Wake safety" v="read-only by default; per-room toggle allows edits; hop limit 3; 5 min timeout" />
+          <Row
+            k="Shim command"
+            v={`${ov.home}/bin/agentmux mcp --agent <id>`}
+          />
+          <Row
+            k="HTTP gateway"
+            v="127.0.0.1:4317/mcp (bearer token; only reachable from outside through a tunnel you start)"
+          />
+          <Row
+            k="Wake safety"
+            v="read-only by default; per-room toggle allows edits; hop limit 3; 5 min timeout"
+          />
           <UpdateSettings />
           <div className="mt-5 border-t border-white/5 pt-3 text-[11px] leading-relaxed text-zinc-600">
-            Cursor, ChatGPT and OpenAI, Grok and xAI, Gemini and Google, Claude and Anthropic are trademarks of their respective owners. Their logos are shown
-            only to identify each provider (marks via LobeHub Icons, MIT); Claude Code is shown in Anthropic&apos;s colour without its logo. AgentMux is an
-            independent open-source project and is not affiliated with or endorsed by any of them.
+            Cursor, ChatGPT and OpenAI, Grok and xAI, Gemini and Google, Claude
+            and Anthropic are trademarks of their respective owners. Their logos
+            are shown only to identify each provider (marks via LobeHub Icons,
+            MIT); Claude Code is shown in Anthropic&apos;s colour without its
+            logo. AgentMux is an independent open-source project and is not
+            affiliated with or endorsed by any of them.
           </div>
         </div>
       )}

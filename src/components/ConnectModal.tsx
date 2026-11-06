@@ -14,6 +14,7 @@ import {
 } from "../lib/api";
 import TunnelPanel from "./TunnelPanel";
 import { Avatar, Badge, Dot, Modal, btn, btnPrimary } from "./ui";
+import { ask } from "./Dialogs";
 
 interface Props {
   ov: Overview;
@@ -301,11 +302,13 @@ export default function ConnectModal({
                   disabled={
                     busy || !renameTo.trim() || renameTo.trim() === meta.name
                   }
-                  onClick={() => {
+                  onClick={async () => {
                     if (
-                      !window.confirm(
-                        `Rename "${meta.name}" to "${renameTo.trim()}"?\n\nEveryone sees the new name, agents that worked with it get a notice, and ${isGrok(target) ? "the bot is told" : "it is told on its next run"}. Its address @${target} doesn't change.`,
-                      )
+                      !(await ask({
+                        title: "Rename for everyone?",
+                        confirm: "Rename",
+                        message: `Rename "${meta.name}" to "${renameTo.trim()}"?\n\nEveryone sees the new name, agents that worked with it get a notice, and ${isGrok(target) ? "the bot is told" : "it is told on its next run"}. Its address @${target} doesn't change.`,
+                      }))
                     )
                       return;
                     api
@@ -322,9 +325,12 @@ export default function ConnectModal({
                     disabled={busy}
                     onClick={async () => {
                       if (
-                        !window.confirm(
-                          `Remove ${meta.name}? Its token and webhook key are deleted.`,
-                        )
+                        !(await ask({
+                          title: `Remove ${meta.name}?`,
+                          confirm: "Remove bot",
+                          danger: true,
+                          message: "Its token and webhook key are deleted.",
+                        }))
                       )
                         return;
                       try {

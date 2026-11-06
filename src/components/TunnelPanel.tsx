@@ -1,29 +1,52 @@
 import { useEffect, useState } from "react";
 import { Check, Copy, Eye, EyeOff, RefreshCw } from "lucide-react";
-import { agentMeta, api, onMuxEvent, type Gateway, type PortHolder, type TunnelProvider } from "../lib/api";
+import {
+  agentMeta,
+  api,
+  onMuxEvent,
+  type Gateway,
+  type PortHolder,
+  type TunnelProvider,
+} from "../lib/api";
 import { Badge, Dot, btn, btnPrimary } from "./ui";
+import { ask } from "./Dialogs";
 
 type Run = (fn: () => Promise<Gateway>) => Promise<void>;
 const input =
   "min-w-0 flex-1 select-text rounded-md border border-white/10 bg-black/40 px-2 py-1.5 font-mono text-[11px] text-zinc-200 outline-none focus:border-white/30 disabled:opacity-60";
 
 /** Permanent Cloudflare tunnel: connect (pick the domain in the browser), type a subdomain, done. */
-function CloudflareSetup({ gw, busy, run }: { gw: Gateway; busy: boolean; live: boolean; run: Run }) {
+function CloudflareSetup({
+  gw,
+  busy,
+  run,
+}: {
+  gw: Gateway;
+  busy: boolean;
+  live: boolean;
+  run: Run;
+}) {
   const [open, setOpen] = useState(false);
   const [sub, setSub] = useState("mux");
   const [token, setToken] = useState("");
   const [tokenHost, setTokenHost] = useState("");
   const [advanced, setAdvanced] = useState(false);
   const [waiting, setWaiting] = useState(false);
-  const [check, setCheck] = useState<{ ok: boolean; text: string } | null>(null);
+  const [check, setCheck] = useState<{ ok: boolean; text: string } | null>(
+    null,
+  );
 
   // Already logged in from before: look up which domain that login is for.
   useEffect(() => {
-    if (gw.cfLoggedIn && !gw.cfZone && gw.cfMode === "quick") api.cfLogin().catch(() => {});
+    if (gw.cfLoggedIn && !gw.cfZone && gw.cfMode === "quick")
+      api.cfLogin().catch(() => {});
   }, [gw.cfLoggedIn, gw.cfZone, gw.cfMode]);
 
   const test = async () => {
-    setCheck({ ok: true, text: "Testing… (new DNS records can take a minute)" });
+    setCheck({
+      ok: true,
+      text: "Testing… (new DNS records can take a minute)",
+    });
     try {
       setCheck({ ok: true, text: await api.tunnelVerify() });
     } catch (e) {
@@ -40,23 +63,41 @@ function CloudflareSetup({ gw, busy, run }: { gw: Gateway; busy: boolean; live: 
     return (
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-2 text-zinc-400">
-          <Badge tone="green">{gw.cfMode === "named" ? "Cloudflare tunnel" : "dashboard token"}</Badge>
+          <Badge tone="green">
+            {gw.cfMode === "named" ? "Cloudflare tunnel" : "dashboard token"}
+          </Badge>
           <span className="font-mono text-zinc-300">{gw.cfHostname}</span>
-          <button className={`${btn} ml-auto`} disabled={gw.state !== "running"} onClick={test}>
+          <button
+            className={`${btn} ml-auto`}
+            disabled={gw.state !== "running"}
+            onClick={test}
+          >
             Test
           </button>
-          <button className={btn} disabled={busy || gw.state === "running"} title={gw.state === "running" ? "Stop the tunnel first" : undefined} onClick={() => {
+          <button
+            className={btn}
+            disabled={busy || gw.state === "running"}
+            title={gw.state === "running" ? "Stop the tunnel first" : undefined}
+            onClick={async () => {
               if (
-                window.confirm(
-                  `Switch back to a temporary tunnel?\n\n${gw.cfHostname} stops being used: every Grok connector set to it stops working until you restore it or paste a new URL. The tunnel stays in your Cloudflare account, and you can restore it later from this panel.`,
-                )
+                await ask({
+                  title: "Switch back to a temporary tunnel?",
+                  confirm: "Switch",
+                  danger: true,
+                  message: `${gw.cfHostname} stops being used: every Grok connector set to it stops working until you restore it or paste a new URL. The tunnel stays in your Cloudflare account, and you can restore it later from this panel.`,
+                })
               )
                 run(api.cfReset);
-            }}>
+            }}
+          >
             Switch back to temporary
           </button>
         </div>
-        {check && <div className={check.ok ? "text-emerald-300" : "text-red-300"}>{check.text}</div>}
+        {check && (
+          <div className={check.ok ? "text-emerald-300" : "text-red-300"}>
+            {check.text}
+          </div>
+        )}
       </div>
     );
   }
@@ -69,33 +110,51 @@ function CloudflareSetup({ gw, busy, run }: { gw: Gateway; busy: boolean; live: 
   }
   return (
     <div className="space-y-2.5 rounded-lg border border-white/10 p-3">
-      <div className="font-semibold text-zinc-200">Permanent Cloudflare tunnel</div>
-      <div className="text-zinc-500">Free, with any domain in your Cloudflare account. AgentMux creates the tunnel and its DNS record, starts it and tests it.</div>
+      <div className="font-semibold text-zinc-200">
+        Permanent Cloudflare tunnel
+      </div>
+      <div className="text-zinc-500">
+        Free, with any domain in your Cloudflare account. AgentMux creates the
+        tunnel and its DNS record, starts it and tests it.
+      </div>
 
       <div className="flex flex-wrap items-center gap-2">
         <span className="w-4 text-zinc-500">1</span>
         {gw.cfLoggedIn ? (
           <>
             <span className="flex items-center gap-1.5 text-emerald-300">
-              <Check size={13} /> Cloudflare connected{gw.cfZone ? ` · ${gw.cfZone}` : ""}
+              <Check size={13} /> Cloudflare connected
+              {gw.cfZone ? ` · ${gw.cfZone}` : ""}
             </span>
-            <button className="text-zinc-500 underline underline-offset-2" disabled={waiting} onClick={() => login(api.cfSwitchDomain)}>
+            <button
+              className="text-zinc-500 underline underline-offset-2"
+              disabled={waiting}
+              onClick={() => login(api.cfSwitchDomain)}
+            >
               {waiting ? "Waiting for your browser…" : "use a different domain"}
             </button>
           </>
         ) : (
           <>
-            <button className={btnPrimary} disabled={busy || waiting} onClick={() => login(api.cfLogin)}>
+            <button
+              className={btnPrimary}
+              disabled={busy || waiting}
+              onClick={() => login(api.cfLogin)}
+            >
               {waiting ? "Waiting for your browser…" : "Connect Cloudflare"}
             </button>
-            <span className="text-zinc-500">Your browser opens: pick the domain and click Authorize.</span>
+            <span className="text-zinc-500">
+              Your browser opens: pick the domain and click Authorize.
+            </span>
           </>
         )}
       </div>
 
       <div className="flex items-center gap-2">
         <span className="w-4 text-zinc-500">2</span>
-        <div className={`flex min-w-0 flex-1 items-center rounded-md border border-white/10 bg-black/40 pr-2 ${gw.cfLoggedIn ? "" : "opacity-60"}`}>
+        <div
+          className={`flex min-w-0 flex-1 items-center rounded-md border border-white/10 bg-black/40 pr-2 ${gw.cfLoggedIn ? "" : "opacity-60"}`}
+        >
           <input
             value={sub}
             onChange={(e) => setSub(e.target.value)}
@@ -104,7 +163,11 @@ function CloudflareSetup({ gw, busy, run }: { gw: Gateway; busy: boolean; live: 
             placeholder="mux"
             className="min-w-0 flex-1 select-text bg-transparent px-2 py-1.5 font-mono text-[11px] text-zinc-200 outline-none"
           />
-          {!sub.includes(".") && <span className="shrink-0 font-mono text-[11px] text-zinc-500">.{gw.cfZone ?? "‹the domain you authorized›"}</span>}
+          {!sub.includes(".") && (
+            <span className="shrink-0 font-mono text-[11px] text-zinc-500">
+              .{gw.cfZone ?? "‹the domain you authorized›"}
+            </span>
+          )}
         </div>
         <button
           className={btnPrimary}
@@ -117,25 +180,59 @@ function CloudflareSetup({ gw, busy, run }: { gw: Gateway; busy: boolean; live: 
           {busy ? "Setting up…" : "Create & start"}
         </button>
       </div>
-      <div className="pl-6 text-zinc-600">Type just the subdomain. Cloudflare doesn&apos;t tell apps which domain you authorized, so AgentMux learns it when it creates the record and shows the full address here.</div>
-      {check && <div className={check.ok ? "pl-6 text-emerald-300" : "pl-6 text-red-300"}>{check.text}</div>}
+      <div className="pl-6 text-zinc-600">
+        Type just the subdomain. Cloudflare doesn&apos;t tell apps which domain
+        you authorized, so AgentMux learns it when it creates the record and
+        shows the full address here.
+      </div>
+      {check && (
+        <div
+          className={check.ok ? "pl-6 text-emerald-300" : "pl-6 text-red-300"}
+        >
+          {check.text}
+        </div>
+      )}
 
-      <button className="text-zinc-500 underline underline-offset-2" onClick={() => setAdvanced(!advanced)}>
-        {advanced ? "Hide" : "Or use a tunnel token from the Cloudflare dashboard"}
+      <button
+        className="text-zinc-500 underline underline-offset-2"
+        onClick={() => setAdvanced(!advanced)}
+      >
+        {advanced
+          ? "Hide"
+          : "Or use a tunnel token from the Cloudflare dashboard"}
       </button>
       {advanced && (
         <div className="space-y-2">
           <div className="text-zinc-500">
-            In Zero Trust → Networks → Tunnels, create a tunnel, add a public hostname whose service is <span className="font-mono">http://localhost:{gw.port}</span>, then paste the token from its
-            install command.
+            In Zero Trust → Networks → Tunnels, create a tunnel, add a public
+            hostname whose service is{" "}
+            <span className="font-mono">http://localhost:{gw.port}</span>, then
+            paste the token from its install command.
           </div>
-          <input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="Tunnel token (eyJ…)" autoComplete="off" className={`${input} w-full`} />
+          <input
+            type="password"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="Tunnel token (eyJ…)"
+            autoComplete="off"
+            className={`${input} w-full`}
+          />
           <div className="flex gap-2">
-            <input value={tokenHost} onChange={(e) => setTokenHost(e.target.value)} placeholder="The public hostname you added, e.g. mux.yourdomain.com" spellCheck={false} className={input} />
+            <input
+              value={tokenHost}
+              onChange={(e) => setTokenHost(e.target.value)}
+              placeholder="The public hostname you added, e.g. mux.yourdomain.com"
+              spellCheck={false}
+              className={input}
+            />
             <button
               className={btnPrimary}
               disabled={busy || !token.trim() || !tokenHost.trim()}
-              onClick={() => run(() => api.cfToken(token.trim(), tokenHost.trim())).then(() => setToken(""))}
+              onClick={() =>
+                run(() => api.cfToken(token.trim(), tokenHost.trim())).then(
+                  () => setToken(""),
+                )
+              }
             >
               Save
             </button>
@@ -147,7 +244,17 @@ function CloudflareSetup({ gw, busy, run }: { gw: Gateway; busy: boolean; live: 
 }
 
 /** ngrok: authtoken (keychain) plus a static domain makes the URL permanent. */
-function NgrokSetup({ gw, busy, live, run }: { gw: Gateway; busy: boolean; live: boolean; run: Run }) {
+function NgrokSetup({
+  gw,
+  busy,
+  live,
+  run,
+}: {
+  gw: Gateway;
+  busy: boolean;
+  live: boolean;
+  run: Run;
+}) {
   const [token, setToken] = useState("");
   const [domain, setDomain] = useState(gw.ngrokDomain ?? "");
   const dirty = token.trim() !== "" || domain.trim() !== (gw.ngrokDomain ?? "");
@@ -155,23 +262,40 @@ function NgrokSetup({ gw, busy, live, run }: { gw: Gateway; busy: boolean; live:
     <div className="space-y-2 rounded-lg border border-white/10 p-3">
       <div className="font-semibold text-zinc-200">ngrok</div>
       <div className="text-zinc-500">
-        Free accounts get one static domain (dashboard.ngrok.com → Domains). Paste it here with your authtoken to keep the same URL. Without a domain the URL is temporary.
+        Free accounts get one static domain (dashboard.ngrok.com → Domains).
+        Paste it here with your authtoken to keep the same URL. Without a domain
+        the URL is temporary.
       </div>
       <input
         type="password"
         value={token}
         disabled={live}
         onChange={(e) => setToken(e.target.value)}
-        placeholder={gw.ngrokAuthtoken ? "Authtoken saved in Keychain (paste to replace)" : "Authtoken (optional if ngrok is already configured)"}
+        placeholder={
+          gw.ngrokAuthtoken
+            ? "Authtoken saved in Keychain (paste to replace)"
+            : "Authtoken (optional if ngrok is already configured)"
+        }
         autoComplete="off"
         className={`${input} w-full`}
       />
       <div className="flex gap-2">
-        <input value={domain} disabled={live} onChange={(e) => setDomain(e.target.value)} placeholder="Static domain, e.g. my-app.ngrok-free.app" spellCheck={false} className={input} />
+        <input
+          value={domain}
+          disabled={live}
+          onChange={(e) => setDomain(e.target.value)}
+          placeholder="Static domain, e.g. my-app.ngrok-free.app"
+          spellCheck={false}
+          className={input}
+        />
         <button
           className={btnPrimary}
           disabled={busy || live || !dirty}
-          onClick={() => run(() => api.ngrokSetup(token.trim() || null, domain.trim())).then(() => setToken(""))}
+          onClick={() =>
+            run(() => api.ngrokSetup(token.trim() || null, domain.trim())).then(
+              () => setToken(""),
+            )
+          }
         >
           Save
         </button>
@@ -180,11 +304,23 @@ function NgrokSetup({ gw, busy, live, run }: { gw: Gateway; busy: boolean; live:
   );
 }
 
-const LABEL: Record<TunnelProvider, string> = { cloudflared: "Cloudflare Tunnel", ngrok: "ngrok" };
-const INSTALL: Record<TunnelProvider, string> = { cloudflared: "brew install cloudflared", ngrok: "brew install ngrok" };
+const LABEL: Record<TunnelProvider, string> = {
+  cloudflared: "Cloudflare Tunnel",
+  ngrok: "ngrok",
+};
+const INSTALL: Record<TunnelProvider, string> = {
+  cloudflared: "brew install cloudflared",
+  ngrok: "brew install ngrok",
+};
 
 /** Starts/stops the tunnel that lets cloud agents (Grok) reach this Mac, and shows what to paste into them. */
-export default function TunnelPanel({ compact, agent = "grok" }: { compact?: boolean; agent?: string }) {
+export default function TunnelPanel({
+  compact,
+  agent = "grok",
+}: {
+  compact?: boolean;
+  agent?: string;
+}) {
   const [gw, setGw] = useState<Gateway | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -201,8 +337,13 @@ export default function TunnelPanel({ compact, agent = "grok" }: { compact?: boo
   }, [agent]);
 
   useEffect(() => {
-    api.gatewayStatus().then(setGw).catch((e) => setErr(String(e)));
-    const off = onMuxEvent((e) => e.kind === "tunnel" && setGw(e.data as Gateway));
+    api
+      .gatewayStatus()
+      .then(setGw)
+      .catch((e) => setErr(String(e)));
+    const off = onMuxEvent(
+      (e) => e.kind === "tunnel" && setGw(e.data as Gateway),
+    );
     return () => void off.then((f) => f());
   }, []);
 
@@ -210,12 +351,24 @@ export default function TunnelPanel({ compact, agent = "grok" }: { compact?: boo
   const bound = !!gw?.http;
   useEffect(() => {
     if (!gw || bound) return setHolder(null);
-    api.portHolder().then(setHolder).catch(() => setHolder(null));
+    api
+      .portHolder()
+      .then(setHolder)
+      .catch(() => setHolder(null));
   }, [gw === null, bound]);
 
   const takeOver = async () => {
     if (!holder) return;
-    if (!holder.isSelf && !window.confirm(`Stop the other AgentMux process (pid ${holder.pid})?\n${holder.path}`)) return;
+    if (
+      !holder.isSelf &&
+      !(await ask({
+        title: "Stop the other AgentMux?",
+        confirm: "Stop it",
+        danger: true,
+        message: `Stop the other AgentMux process (pid ${holder.pid})?\n${holder.path}`,
+      }))
+    )
+      return;
     setBusy(true);
     setErr(null);
     try {
@@ -249,7 +402,9 @@ export default function TunnelPanel({ compact, agent = "grok" }: { compact?: boo
   const reveal = async (rotate = false) => {
     setErr(null);
     try {
-      const r = await (rotate ? api.gatewayRotate(agent) : api.gatewayReveal(agent));
+      const r = await (rotate
+        ? api.gatewayRotate(agent)
+        : api.gatewayReveal(agent));
       setToken(r.token);
       setShow(true);
     } catch (e) {
@@ -257,16 +412,27 @@ export default function TunnelPanel({ compact, agent = "grok" }: { compact?: boo
     }
   };
 
-  if (!gw) return <div className="text-xs text-zinc-500">{err ?? "Loading…"}</div>;
+  if (!gw)
+    return <div className="text-xs text-zinc-500">{err ?? "Loading…"}</div>;
   const live = gw.state === "starting" || gw.state === "running";
-  const tone = gw.state === "running" ? "green" : gw.state === "error" ? "red" : gw.state === "starting" ? "amber" : "zinc";
+  const tone =
+    gw.state === "running"
+      ? "green"
+      : gw.state === "error"
+        ? "red"
+        : gw.state === "starting"
+          ? "amber"
+          : "zinc";
 
   return (
     <div className="space-y-3 text-xs">
       {!compact && (
         <div className="text-zinc-400">
-          Cloud agents like Grok can&apos;t reach <span className="font-mono">localhost</span>. A tunnel publishes AgentMux&apos;s HTTP endpoint over HTTPS while it runs. It is off by
-          default, stops when you quit AgentMux, and the token only unlocks <span className="font-mono">{gw.tools.join(", ")}</span>.
+          Cloud agents like Grok can&apos;t reach{" "}
+          <span className="font-mono">localhost</span>. A tunnel publishes
+          AgentMux&apos;s HTTP endpoint over HTTPS while it runs. It is off by
+          default, stops when you quit AgentMux, and the token only unlocks{" "}
+          <span className="font-mono">{gw.tools.join(", ")}</span>.
         </div>
       )}
 
@@ -280,40 +446,66 @@ export default function TunnelPanel({ compact, agent = "grok" }: { compact?: boo
           >
             <span className="font-medium">{LABEL[p]}</span>
             {p === "cloudflared" && <Badge>default</Badge>}
-            <Badge tone={gw.installed[p] ? "green" : "amber"}>{gw.installed[p] ? "installed" : "not installed"}</Badge>
+            <Badge tone={gw.installed[p] ? "green" : "amber"}>
+              {gw.installed[p] ? "installed" : "not installed"}
+            </Badge>
           </button>
         ))}
       </div>
 
       {gw.permanent && !gw.verified ? (
         <div className="rounded-md bg-amber-500/10 p-2 text-amber-200">
-          <b>Not verified yet.</b> A permanent tunnel is set up for <span className="font-mono">https://{gw.provider === "ngrok" ? gw.ngrokDomain : gw.cfHostname}</span>, but it hasn&apos;t been
-          confirmed to reach this Mac from the internet. Start it and click <b>Test</b>. Don&apos;t paste the URL into Grok until the test passes.
+          <b>Not verified yet.</b> A permanent tunnel is set up for{" "}
+          <span className="font-mono">
+            https://{gw.provider === "ngrok" ? gw.ngrokDomain : gw.cfHostname}
+          </span>
+          , but it hasn&apos;t been confirmed to reach this Mac from the
+          internet. Start it and click <b>Test</b>. Don&apos;t paste the URL
+          into Grok until the test passes.
         </div>
       ) : gw.permanent ? (
         <div className="flex flex-wrap items-center gap-2 rounded-md bg-emerald-500/10 p-2 text-emerald-200">
           <span className="min-w-0 flex-1">
-            Permanent URL <span className="font-mono">https://{gw.provider === "ngrok" ? gw.ngrokDomain : gw.cfHostname}</span>. It survives restarts, so each Grok bot&apos;s connector only needs it once.
+            Permanent URL{" "}
+            <span className="font-mono">
+              https://{gw.provider === "ngrok" ? gw.ngrokDomain : gw.cfHostname}
+            </span>
+            . It survives restarts, so each Grok bot&apos;s connector only needs
+            it once.
           </span>
           <label className="flex cursor-pointer items-center gap-1.5">
-            <input type="checkbox" checked={gw.autostart} disabled={busy} onChange={(e) => run(() => api.setAutostart(e.target.checked))} />
+            <input
+              type="checkbox"
+              checked={gw.autostart}
+              disabled={busy}
+              onChange={(e) => run(() => api.setAutostart(e.target.checked))}
+            />
             Start when AgentMux opens
           </label>
         </div>
       ) : (
         <div className="rounded-md bg-amber-500/10 p-2 text-amber-200">
-          <b>Temporary URL.</b> A quick tunnel gets a new random address every time it or AgentMux restarts, and you&apos;d paste it into every Grok bot again. To keep one URL,
-          connect your own domain through Cloudflare or a static ngrok domain below.
+          <b>Temporary URL.</b> A quick tunnel gets a new random address every
+          time it or AgentMux restarts, and you&apos;d paste it into every Grok
+          bot again. To keep one URL, connect your own domain through Cloudflare
+          or a static ngrok domain below.
         </div>
       )}
 
-      {gw.provider === "cloudflared" && <CloudflareSetup gw={gw} busy={busy} live={live} run={run} />}
-      {gw.provider === "ngrok" && <NgrokSetup gw={gw} busy={busy} live={live} run={run} />}
+      {gw.provider === "cloudflared" && (
+        <CloudflareSetup gw={gw} busy={busy} live={live} run={run} />
+      )}
+      {gw.provider === "ngrok" && (
+        <NgrokSetup gw={gw} busy={busy} live={live} run={run} />
+      )}
 
       {!gw.installed[gw.provider] && (
         <div className="flex items-center gap-2 rounded bg-black/40 p-2 font-mono text-[11px] text-zinc-200">
           <span className="min-w-0 flex-1">{INSTALL[gw.provider]}</span>
-          <button onClick={() => copy("install", INSTALL[gw.provider])} className="shrink-0 text-zinc-400 hover:text-white">
+          <button
+            onClick={() => copy("install", INSTALL[gw.provider])}
+            className="shrink-0 text-zinc-400 hover:text-white"
+          >
             {copied === "install" ? <Check size={14} /> : <Copy size={14} />}
           </button>
         </div>
@@ -321,25 +513,44 @@ export default function TunnelPanel({ compact, agent = "grok" }: { compact?: boo
 
       <div className="flex flex-wrap items-center gap-2">
         {live ? (
-          <button className={btn} disabled={busy} onClick={() => run(api.gatewayStop)}>
+          <button
+            className={btn}
+            disabled={busy}
+            onClick={() => run(api.gatewayStop)}
+          >
             Stop tunnel
           </button>
         ) : (
-          <button className={btnPrimary} disabled={busy || !gw.installed[gw.provider] || !gw.http} onClick={() => run(api.gatewayStart)}>
+          <button
+            className={btnPrimary}
+            disabled={busy || !gw.installed[gw.provider] || !gw.http}
+            onClick={() => run(api.gatewayStart)}
+          >
             Start tunnel
           </button>
         )}
         <Dot on={gw.state === "running"} pulse={gw.state === "starting"} />
         <Badge tone={tone}>{gw.state}</Badge>
-        {gw.remote && <span className="text-zinc-500">served by the AgentMux background service</span>}
-        {!gw.http && !holder && <span className="text-amber-300">local endpoint not running yet (port {gw.port})</span>}
+        {gw.remote && (
+          <span className="text-zinc-500">
+            served by the AgentMux background service
+          </span>
+        )}
+        {!gw.http && !holder && (
+          <span className="text-amber-300">
+            local endpoint not running yet (port {gw.port})
+          </span>
+        )}
       </div>
 
       {gw.lostPermanent && (
         <div className="space-y-2 rounded-md border border-amber-400/30 bg-amber-500/10 p-2.5 text-[11.5px] text-amber-200">
           <div>
-            <b>Your permanent tunnel was cleared.</b> <span className="font-mono">{gw.lostPermanent}</span> was set up and working, but its settings are gone, so
-            AgentMux won&apos;t quietly start a temporary URL in its place. Grok connectors pointing at it are offline until you restore it.
+            <b>Your permanent tunnel was cleared.</b>{" "}
+            <span className="font-mono">{gw.lostPermanent}</span> was set up and
+            working, but its settings are gone, so AgentMux won&apos;t quietly
+            start a temporary URL in its place. Grok connectors pointing at it
+            are offline until you restore it.
           </div>
           <div className="flex flex-wrap gap-2">
             <button
@@ -350,7 +561,9 @@ export default function TunnelPanel({ compact, agent = "grok" }: { compact?: boo
                 setErr(null);
                 try {
                   const host = await api.tunnelRestore();
-                  setNote(`Restored ${host}. Start the tunnel to bring it back online.`);
+                  setNote(
+                    `Restored ${host}. Start the tunnel to bring it back online.`,
+                  );
                   setGw(await api.gatewayStatus());
                 } catch (e) {
                   setErr(String(e));
@@ -361,7 +574,11 @@ export default function TunnelPanel({ compact, agent = "grok" }: { compact?: boo
             >
               Restore {gw.lostPermanent}
             </button>
-            <button className={btn} disabled={busy} onClick={() => run(api.tunnelKeepTemporary)}>
+            <button
+              className={btn}
+              disabled={busy}
+              onClick={() => run(api.tunnelKeepTemporary)}
+            >
               Use a temporary tunnel instead
             </button>
           </div>
@@ -372,52 +589,96 @@ export default function TunnelPanel({ compact, agent = "grok" }: { compact?: boo
         <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-400/30 bg-amber-500/10 p-2.5 text-[11.5px] text-amber-200">
           <span className="min-w-0 flex-1">
             {holder.isSelf ? (
-              <>Port {gw.port} is held by this app, but the AgentMux background service owns the tunnel, so it can&apos;t use the port.</>
+              <>
+                Port {gw.port} is held by this app, but the AgentMux background
+                service owns the tunnel, so it can&apos;t use the port.
+              </>
             ) : holder.agentmux ? (
               <>
-                Port {gw.port} is held by another AgentMux process (pid {holder.pid}), so the tunnel can&apos;t start.
-                <span className="block break-all font-mono text-[10.5px] text-amber-200/70">{holder.path}</span>
+                Port {gw.port} is held by another AgentMux process (pid{" "}
+                {holder.pid}), so the tunnel can&apos;t start.
+                <span className="block break-all font-mono text-[10.5px] text-amber-200/70">
+                  {holder.path}
+                </span>
               </>
             ) : (
               <>
-                Port {gw.port} is used by <span className="font-mono">{holder.path}</span> (pid {holder.pid}), which isn&apos;t AgentMux. Quit that program to use the tunnel.
+                Port {gw.port} is used by{" "}
+                <span className="font-mono">{holder.path}</span> (pid{" "}
+                {holder.pid}), which isn&apos;t AgentMux. Quit that program to
+                use the tunnel.
               </>
             )}
           </span>
           {(holder.agentmux || holder.isSelf) && (
             <button className={btnPrimary} disabled={busy} onClick={takeOver}>
-              {holder.isSelf ? "Let the background service use it" : "Stop it and use the port"}
+              {holder.isSelf
+                ? "Let the background service use it"
+                : "Stop it and use the port"}
             </button>
           )}
         </div>
       )}
       {note && <div className="text-[11.5px] text-emerald-300">{note}</div>}
 
-      {gw.error && <pre className="whitespace-pre-wrap rounded-md bg-red-500/10 p-2 font-mono text-[11px] text-red-200">{gw.error}</pre>}
-      {err && <pre className="whitespace-pre-wrap rounded-md bg-red-500/10 p-2 font-mono text-[11px] text-red-200">{err}</pre>}
+      {gw.error && (
+        <pre className="whitespace-pre-wrap rounded-md bg-red-500/10 p-2 font-mono text-[11px] text-red-200">
+          {gw.error}
+        </pre>
+      )}
+      {err && (
+        <pre className="whitespace-pre-wrap rounded-md bg-red-500/10 p-2 font-mono text-[11px] text-red-200">
+          {err}
+        </pre>
+      )}
 
       {gw.state === "running" && gw.mcpUrl && (
         <div className="space-y-2 rounded-lg border border-white/10 p-3">
           <div>
             <div className="mb-1 text-zinc-500">MCP server URL</div>
             <div className="flex items-center gap-2 rounded bg-black/40 p-2 font-mono text-[11px] text-zinc-200">
-              <span className="min-w-0 flex-1 select-text break-all">{gw.mcpUrl}</span>
-              <button onClick={() => copy("url", gw.mcpUrl!)} className="shrink-0 text-zinc-400 hover:text-white">
+              <span className="min-w-0 flex-1 select-text break-all">
+                {gw.mcpUrl}
+              </span>
+              <button
+                onClick={() => copy("url", gw.mcpUrl!)}
+                className="shrink-0 text-zinc-400 hover:text-white"
+              >
                 {copied === "url" ? <Check size={14} /> : <Copy size={14} />}
               </button>
             </div>
           </div>
           <div>
-            <div className="mb-1 text-zinc-500">Authorization: Bearer token for {agentMeta(agent).name}</div>
+            <div className="mb-1 text-zinc-500">
+              Authorization: Bearer token for {agentMeta(agent).name}
+            </div>
             <div className="flex items-center gap-2 rounded bg-black/40 p-2 font-mono text-[11px] text-zinc-200">
-              <span className="min-w-0 flex-1 select-text break-all">{token ? (show ? token : "•".repeat(24)) : "stored in the macOS Keychain"}</span>
+              <span className="min-w-0 flex-1 select-text break-all">
+                {token
+                  ? show
+                    ? token
+                    : "•".repeat(24)
+                  : "stored in the macOS Keychain"}
+              </span>
               {token ? (
                 <>
-                  <button onClick={() => setShow(!show)} className="shrink-0 text-zinc-400 hover:text-white" title={show ? "Hide" : "Show"}>
+                  <button
+                    onClick={() => setShow(!show)}
+                    className="shrink-0 text-zinc-400 hover:text-white"
+                    title={show ? "Hide" : "Show"}
+                  >
                     {show ? <EyeOff size={14} /> : <Eye size={14} />}
                   </button>
-                  <button onClick={() => copy("token", token)} className="shrink-0 text-zinc-400 hover:text-white" title="Copy">
-                    {copied === "token" ? <Check size={14} /> : <Copy size={14} />}
+                  <button
+                    onClick={() => copy("token", token)}
+                    className="shrink-0 text-zinc-400 hover:text-white"
+                    title="Copy"
+                  >
+                    {copied === "token" ? (
+                      <Check size={14} />
+                    ) : (
+                      <Copy size={14} />
+                    )}
                   </button>
                 </>
               ) : (
@@ -425,12 +686,21 @@ export default function TunnelPanel({ compact, agent = "grok" }: { compact?: boo
                   Reveal
                 </button>
               )}
-              <button className="shrink-0 text-zinc-400 hover:text-white" title="Rotate token (locks out the old one)" onClick={() => reveal(true)}>
+              <button
+                className="shrink-0 text-zinc-400 hover:text-white"
+                title="Rotate token (locks out the old one)"
+                onClick={() => reveal(true)}
+              >
                 <RefreshCw size={14} />
               </button>
             </div>
           </div>
-          {!gw.permanent && <div className="text-zinc-500">This URL is temporary: it changes every time the tunnel starts. Update each Grok bot&apos;s connector when it does.</div>}
+          {!gw.permanent && (
+            <div className="text-zinc-500">
+              This URL is temporary: it changes every time the tunnel starts.
+              Update each Grok bot&apos;s connector when it does.
+            </div>
+          )}
         </div>
       )}
     </div>

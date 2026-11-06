@@ -21,10 +21,13 @@ export function useInstall() {
   const [pct, setPct] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => {
-    const off = listen<{ done: number; total?: number | null }>("update://progress", (e) => {
-      const { done, total } = e.payload;
-      setPct(total ? Math.min(99, Math.round((done / total) * 100)) : 0);
-    });
+    const off = listen<{ done: number; total?: number | null }>(
+      "update://progress",
+      (e) => {
+        const { done, total } = e.payload;
+        setPct(total ? Math.min(99, Math.round((done / total) * 100)) : 0);
+      },
+    );
     return () => void off.then((f) => f());
   }, []);
   const install = async () => {
@@ -54,17 +57,27 @@ export function UpdateRow() {
     try {
       const r = await api.checkUpdate();
       if (r.available) setFound({ version: r.version!, notes: r.notes });
-      else if (manual) setNote({ ok: true, text: "You're on the latest version" });
+      else if (manual)
+        setNote({ ok: true, text: "You're on the latest version" });
     } catch (e) {
       // The automatic check stays quiet; only a click reports problems.
-      if (manual) setNote({ ok: false, text: /network|dns|connect|resolve|fetch|request/i.test(String(e)) ? "Couldn't reach GitHub" : `Couldn't check: ${e}` });
+      if (manual)
+        setNote({
+          ok: false,
+          text: /network|dns|connect|resolve|fetch|request/i.test(String(e))
+            ? "Couldn't reach GitHub"
+            : `Couldn't check: ${e}`,
+        });
     } finally {
       setChecking(false);
     }
   };
 
   useEffect(() => {
-    api.appVersion().then((v) => setVersion(v.version)).catch(() => {});
+    api
+      .appVersion()
+      .then((v) => setVersion(v.version))
+      .catch(() => {});
     const t = setTimeout(() => void check(false), 3000);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -91,35 +104,65 @@ export function UpdateRow() {
             <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
           </span>
           <span className="min-w-0 flex-1 truncate">
-            {!installing ? `Update to v${found.version.replace(/^v/, "")}` : pct >= 99 ? "Installing, restarting…" : `Downloading… ${pct}%`}
+            {!installing
+              ? `Update to v${found.version.replace(/^v/, "")}`
+              : pct >= 99
+                ? "Installing, restarting…"
+                : `Downloading… ${pct}%`}
           </span>
           {installing && (
             <span className="h-1 w-14 overflow-hidden rounded-full bg-white/10">
-              <span className="block h-full bg-emerald-400 transition-all" style={{ width: `${Math.max(4, pct)}%` }} />
+              <span
+                className="block h-full bg-emerald-400 transition-all"
+                style={{ width: `${Math.max(4, pct)}%` }}
+              />
             </span>
           )}
         </button>
       ) : (
-        <button onClick={() => void check(true)} disabled={checking} className="flex w-full items-center gap-2 text-left text-zinc-500 hover:text-zinc-300" title="Check GitHub for a newer release">
+        <button
+          onClick={() => void check(true)}
+          disabled={checking}
+          className="flex w-full items-center gap-2 text-left text-zinc-500 hover:text-zinc-300"
+          title="Check GitHub for a newer release"
+        >
           <RefreshCw size={12} className={checking ? "animate-spin" : ""} />
-          <span className="min-w-0 flex-1 truncate">{checking ? "Checking for updates…" : version ? `v${version} · Up to date` : "Check for updates"}</span>
+          <span className="min-w-0 flex-1 truncate">
+            {checking
+              ? "Checking for updates…"
+              : version
+                ? `v${version} · Up to date`
+                : "Check for updates"}
+          </span>
         </button>
       )}
-      {(note || err) && <div className={`mt-1.5 break-words ${err || note?.ok === false ? "text-red-300" : "text-zinc-500"}`}>{err ?? note?.text}</div>}
+      {(note || err) && (
+        <div
+          className={`mt-1.5 break-words ${err || note?.ok === false ? "text-red-300" : "text-zinc-500"}`}
+        >
+          {err ?? note?.text}
+        </div>
+      )}
     </div>
   );
 }
 
 /** Settings → Daemon: version, manual check, and the switch for the automatic check. */
 export function UpdateSettings() {
-  const [info, setInfo] = useState<{ version: string; autoCheck: boolean } | null>(null);
+  const [info, setInfo] = useState<{
+    version: string;
+    autoCheck: boolean;
+  } | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [found, setFound] = useAvailableUpdate();
   const { pct, err, install } = useInstall();
 
   useEffect(() => {
-    api.appVersion().then(setInfo).catch(() => {});
+    api
+      .appVersion()
+      .then(setInfo)
+      .catch(() => {});
   }, []);
 
   const check = async () => {
@@ -142,12 +185,24 @@ export function UpdateSettings() {
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-zinc-500">Version</span>
         <span className="font-mono text-zinc-200">{info.version}</span>
-        <button className={`${btn} ml-auto`} disabled={busy || pct !== null} onClick={check}>
+        <button
+          className={`${btn} ml-auto`}
+          disabled={busy || pct !== null}
+          onClick={check}
+        >
           Check for updates
         </button>
         {found && (
-          <button className={btnPrimary} disabled={pct !== null} onClick={install}>
-            {pct === null ? `Install ${found.version} & restart` : pct >= 99 ? "Installing…" : `Downloading ${pct}%`}
+          <button
+            className={btnPrimary}
+            disabled={pct !== null}
+            onClick={install}
+          >
+            {pct === null
+              ? `Install ${found.version} & restart`
+              : pct >= 99
+                ? "Installing…"
+                : `Downloading ${pct}%`}
           </button>
         )}
       </div>
@@ -156,17 +211,30 @@ export function UpdateSettings() {
           type="checkbox"
           className="mt-0.5"
           checked={info.autoCheck}
-          onChange={(e) => api.setAutoUpdate(e.target.checked).then(() => setInfo({ ...info, autoCheck: e.target.checked }))}
+          onChange={(e) =>
+            api
+              .setAutoUpdate(e.target.checked)
+              .then(() => setInfo({ ...info, autoCheck: e.target.checked }))
+          }
         />
         <span>
           Check for updates automatically
           <span className="mt-0.5 block text-[11px] text-zinc-600">
-            Contacts github.com/agentmuxhq/agentmux-mcp/releases on launch and every 6 hours. It is the only call AgentMux makes on its own.
+            Contacts github.com/agentmuxhq/agentmux-mcp/releases on launch and
+            every 6 hours. It is the only call AgentMux makes on its own.
           </span>
         </span>
       </label>
-      {found?.notes && <pre className="max-h-28 overflow-auto whitespace-pre-wrap rounded bg-black/40 p-2 text-[11px] text-zinc-400">{found.notes}</pre>}
-      {msg && <div className={msg.ok ? "text-emerald-300" : "text-red-300"}>{msg.text}</div>}
+      {found?.notes && (
+        <pre className="max-h-28 overflow-auto whitespace-pre-wrap rounded bg-black/40 p-2 text-[11px] text-zinc-400">
+          {found.notes}
+        </pre>
+      )}
+      {msg && (
+        <div className={msg.ok ? "text-emerald-300" : "text-red-300"}>
+          {msg.text}
+        </div>
+      )}
       {err && <div className="break-words text-red-300">{err}</div>}
     </div>
   );
