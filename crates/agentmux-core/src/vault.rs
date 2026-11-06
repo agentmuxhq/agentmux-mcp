@@ -283,6 +283,16 @@ impl Vault {
             anyhow::bail!("name must be 1-60 characters");
         }
         let desc: Option<String> = description.map(|d| d.trim().chars().take(240).collect()).filter(|d: &String| !d.is_empty());
+        // Names identify agents to people and to other agents, so no two share one.
+        let clash: Option<String> = self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row("SELECT id FROM providers WHERE lower(name) = lower(?1) AND id != ?2", params![name, id], |r| r.get(0))
+            .optional()?;
+        if let Some(other) = clash {
+            anyhow::bail!("'{name}' is already the name of @{other}; pick another");
+        }
         self.conn.lock().unwrap().execute(
             "UPDATE providers SET name = ?2, description = COALESCE(?3, description), registered = 1 WHERE id = ?1",
             params![id, name, desc],
@@ -561,6 +571,13 @@ impl Vault {
         Ok(n > 0)
     }
 
+    /// Threads an agent took part in, with their rooms.
+    pub fn agent_sessions(&self, agent: &str) -> Result<Vec<(String, String)>> {
+        let c = self.conn.lock().unwrap();
+        let mut st = c.prepare("SELECT DISTINCT session_id, room_id FROM messages WHERE sender = ?1 OR recipient = ?1")?;
+        Ok(st.query_map(params![agent], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<std::result::Result<_, _>>()?)
+    }
+
     /// Agents that took part in a thread (asked, answered or posted).
     pub fn session_members(&self, session: &str) -> Result<Vec<String>> {
         let c = self.conn.lock().unwrap();
@@ -828,7 +845,8 @@ impl Vault {
         self.conn
             .lock()
             .unwrap()
-            .execute("UPDATE tickets SET status = ?2 WHERE id = ?1", params![id, status])?;
+            // Only an open ticket moves (pending → running); an answer that already arrived wins.
+            .execute("UPDATE tickets SET status = ?2 WHERE id = ?1 AND status IN ('pending','running')", params![id, status])?;
         Ok(())
     }
 

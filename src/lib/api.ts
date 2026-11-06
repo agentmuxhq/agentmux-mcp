@@ -23,6 +23,7 @@ const FALLBACK: CatalogEntry[] = [
   { id: "claude", name: "Claude Code", color: "#D97757", hint: "MCP stdio · claude mcp add", multiInstance: false, remoteAccess: false, wake: "cli", contextHook: true },
   { id: "chatgpt", name: "ChatGPT", color: "#10A37F", hint: "MCP stdio · ~/.codex/config.toml", multiInstance: false, remoteAccess: false, wake: "cli", contextHook: false },
   { id: "gemini", name: "Gemini CLI", color: "#1A73E8", hint: "MCP stdio · ~/.gemini/settings.json", multiInstance: false, remoteAccess: false, wake: "cli", contextHook: false },
+  { id: "claude-desktop", name: "Claude Desktop", color: "#D97757", hint: "MCP stdio · Claude app chats (claude_desktop_config.json)", multiInstance: false, remoteAccess: false, wake: "inbox", contextHook: false },
 ];
 
 let known: Provider[] = [];

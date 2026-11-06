@@ -527,9 +527,12 @@ fn set_bot_can_ask(state: State<'_, AppState>, id: String, on: bool) -> Result<(
 }
 
 #[tauri::command]
-fn rename_agent(state: State<'_, AppState>, id: String, name: String, description: Option<String>) -> Result<(), String> {
-    state.core.vault.set_profile(&id, &name, description.as_deref()).map_err(err)?;
-    state.core.emit("provider_connected", json!({"id": id}));
+async fn rename_agent(state: State<'_, AppState>, id: String, name: String, description: Option<String>) -> Result<(), String> {
+    state.core.rename_agent(&id, &name, "user").map_err(err)?;
+    if description.is_some() {
+        let n = state.core.vault.agent_name(&id);
+        state.core.vault.set_profile(&id, &n, description.as_deref()).map_err(err)?;
+    }
     Ok(())
 }
 

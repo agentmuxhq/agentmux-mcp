@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 pub mod chat_hook;
 pub mod claude_code;
+pub mod claude_desktop;
 pub mod codex;
 pub mod cursor;
 pub mod gemini;
@@ -78,7 +79,7 @@ pub trait Provider: Send + Sync {
 }
 
 pub fn builtin() -> Vec<Arc<dyn Provider>> {
-    vec![Arc::new(cursor::Cursor), Arc::new(grok::Grok), Arc::new(claude_code::ClaudeCode), Arc::new(codex::Codex), Arc::new(gemini::Gemini)]
+    vec![Arc::new(cursor::Cursor), Arc::new(grok::Grok), Arc::new(claude_code::ClaudeCode), Arc::new(codex::Codex), Arc::new(gemini::Gemini), Arc::new(claude_desktop::ClaudeDesktop)]
 }
 
 /// Built-ins first, then manifests from `~/.agentmux/providers/`.

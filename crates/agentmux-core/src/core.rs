@@ -132,6 +132,52 @@ impl Core {
         Ok(())
     }
 
+    /// Rename an agent (its display name; its @id, and everything addressed to it, stays). Every
+    /// thread it took part in gets a note, every agent that shared one with it gets a notice, and
+    /// the agent itself is told (woken, if it's a bot with a webhook) so it uses its new name.
+    pub fn rename_agent(self: &Arc<Self>, id: &str, name: &str, by: &str) -> Result<String> {
+        if !self.vault.is_agent(id) {
+            bail!("unknown agent '{id}'");
+        }
+        let old = self.vault.agent_name(id);
+        self.vault.set_profile(id, name, None)?;
+        let new = self.vault.agent_name(id);
+        if old == new {
+            return Ok(new);
+        }
+        let who = if by == "user" { "You".to_string() } else { self.vault.agent_name(by) };
+        let text = format!("Agent renamed: \"{old}\" is now \"{new}\" (by {who}). Its address @{id} is unchanged.");
+        let mut told: Vec<String> = vec![];
+        for (sess, room) in self.vault.agent_sessions(id)? {
+            let msg = self.vault.add_message(&sess, &room, "agentmux", Some("all"), "system", &text, None, None)?;
+            self.emit("message", msg);
+            for m in self.vault.session_members(&sess)? {
+                if m != by && !told.contains(&m) {
+                    told.push(m);
+                }
+            }
+        }
+        if !told.iter().any(|m| m == id) && by != id {
+            told.push(id.to_string());
+        }
+        for m in &told {
+            let note = if m == id { format!("You were renamed: you are now \"{new}\" (address @{id}). Use this name from now on.") } else { text.clone() };
+            self.vault.add_notice(m, "", &note)?;
+        }
+        self.emit("provider_connected", json!({"id": id}));
+        // A bot with a webhook remembers between runs: tell it now.
+        let webhook = self.vault.providers()?.into_iter().find(|p| p["id"] == id).is_some_and(|p| p["wakeKind"] == "webhook");
+        if webhook && by != id {
+            if let (Ok(rt), Ok((url, key))) = (tokio::runtime::Handle::try_current(), webhook::load(&self.vault, id)) {
+                let ctx = format!("agentmux_notice\nFor: @{id}\n\nYou were renamed in AgentMux: you are now \"{new}\" (address @{id} unchanged). Use this name from now on; no mux_reply is needed.\n");
+                rt.spawn(async move {
+                    let _ = webhook::post(&url, &key, &ctx).await;
+                });
+            }
+        }
+        Ok(new)
+    }
+
     /// Post `text` into every thread of a room, notify each member except `by`, and wake the
     /// members that remember between runs (webhook bots; `rooms.wake_on_change`, on by default).
     /// Headless CLI runs start fresh each time, so they get it on their next turn instead.

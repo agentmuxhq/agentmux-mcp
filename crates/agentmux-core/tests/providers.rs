@@ -23,7 +23,7 @@ fn fake_bin(dir: &PathBuf, name: &str) {
 #[test]
 fn registry_and_golden_wake_args() {
     let ids: Vec<String> = providers::builtin().iter().map(|p| p.info().id).collect();
-    assert_eq!(ids, ["cursor", "grok", "claude", "chatgpt", "gemini"]);
+    assert_eq!(ids, ["cursor", "grok", "claude", "chatgpt", "gemini", "claude-desktop"]);
     for p in providers::builtin() {
         let i = p.info();
         assert!(!i.name.is_empty() && i.color.starts_with('#'), "{i:?}");
@@ -164,4 +164,28 @@ fn gemini_registers_in_its_settings_without_touching_the_rest() {
 #[test]
 fn cli_errors_lose_their_colour_codes() {
     assert_eq!(agentmux_core::wakers::strip_ansi("\u{1b}[31mGemini CLI is not running\u{1b}[0m here"), "Gemini CLI is not running here");
+}
+
+#[test]
+fn claude_desktop_registers_in_the_app_config_and_waits_in_its_inbox() {
+    let d = tmp("claude-desktop");
+    let path = d.join("claude_desktop_config.json");
+    std::fs::write(&path, json!({"mcpServers": {}, "preferences": {"theme": "dark"}, "coworkUserFilesPath": "/x"}).to_string()).unwrap();
+    // SAFETY: only this test reads AGENTMUX_CLAUDE_DESKTOP_CONFIG.
+    unsafe { std::env::set_var("AGENTMUX_CLAUDE_DESKTOP_CONFIG", &path) };
+    let p = providers::get("claude-desktop").unwrap();
+    assert_eq!(p.info().name, "Claude Desktop");
+    assert_eq!(p.caps().wake, "inbox", "a chat can't be woken headlessly");
+    assert!(p.wake(&WakeRequest { prompt: "hi", workspace: "/tmp", allow_edits: false, ticket: "T-1" }).is_none());
+    assert!(!p.configured());
+    p.install(&PathBuf::from("/Users/x/.agentmux/bin/agentmux")).unwrap();
+    assert!(p.configured());
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(v["mcpServers"]["agentmux"]["args"], json!(["mcp", "--agent", "claude-desktop"]));
+    assert_eq!(v["preferences"]["theme"], "dark", "the app's own settings are kept");
+    assert_eq!(v["coworkUserFilesPath"], "/x");
+    p.uninstall().unwrap();
+    assert!(!p.configured());
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(v["preferences"]["theme"], "dark");
 }
