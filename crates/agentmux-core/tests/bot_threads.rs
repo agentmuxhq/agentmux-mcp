@@ -46,6 +46,22 @@ async fn a_bot_asking_back_stays_in_the_conversation() {
     assert_ne!(session_of(&core, &t4), handoff);
     core.finish(&t4, "answered", "ok", None).unwrap();
 
+    // Claude Desktop is inbox-only: the bot can queue follow-ups while one is still waiting
+    // (it reads them all next time it's used); a woken agent still takes one at a time.
+    let (r, _) = tool(&core, &bot, &home, "mux_ask_peer", json!({"to": "claude-desktop", "question": "Script still needed.", "wait_s": 0})).await.unwrap();
+    assert!(r["ticket"].is_string(), "{r}");
+    let (r, _) = tool(&core, &bot, &home, "mux_ask_peer", json!({"to": "claude-desktop", "question": "Director asks: does make.py render all shots?", "wait_s": 0})).await.unwrap();
+    assert!(r["ticket"].is_string(), "second question queues behind the first: {r}");
+    assert_eq!(v.open_tickets_between(&bot, "claude-desktop").unwrap(), 2);
+    for i in 0..8 {
+        tool(&core, &bot, &home, "mux_ask_peer", json!({"to": "claude-desktop", "question": format!("q{i}"), "wait_s": 0})).await.unwrap();
+    }
+    let err = tool(&core, &bot, &home, "mux_ask_peer", json!({"to": "claude-desktop", "question": "one too many", "wait_s": 0})).await.unwrap_err();
+    assert!(err.contains("10 questions waiting"), "{err}");
+    let t = core.start_ticket_in(&ctx(&bot, &home), None, None, "claude", "Woken agent?", None).unwrap();
+    assert!(core.start_ticket_in(&ctx(&bot, &home), None, None, "claude", "Again?", None).unwrap_err().to_string().contains("already has an open question"));
+    core.finish(&t, "answered", "ok", None).unwrap();
+
     // A bot with no history with that agent: the Inbox, never a room named after AgentMux's folder.
     let other = v.add_bot("Job Hunter").unwrap();
     let (r, _) = tool(&core, &other, &home, "mux_ask_peer", json!({"to": "claude", "question": "Any openings?", "wait_s": 0})).await.unwrap();

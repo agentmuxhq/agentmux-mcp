@@ -48,6 +48,8 @@ pub fn bin_link() -> PathBuf {
 }
 
 pub const MAX_HOPS: i64 = 3;
+/// Questions one agent can leave waiting in an inbox-only agent's inbox.
+pub const MAX_QUEUED: i64 = 10;
 const DEFAULT_WAKE_TIMEOUT_SECS: u64 = 300;
 
 /// How long a woken agent has to answer. `AGENTMUX_WAKE_TIMEOUT_SECS` overrides it (tests).

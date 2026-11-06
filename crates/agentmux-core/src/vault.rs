@@ -852,12 +852,17 @@ impl Vault {
     }
 
     pub fn open_ticket_between(&self, from: &str, to: &str) -> Result<bool> {
+        Ok(self.open_tickets_between(from, to)? > 0)
+    }
+
+    /// How many questions `from` has waiting on `to`.
+    pub fn open_tickets_between(&self, from: &str, to: &str) -> Result<i64> {
         let n: i64 = self.conn.lock().unwrap().query_row(
             "SELECT COUNT(*) FROM tickets WHERE sender = ?1 AND recipient = ?2 AND status IN ('pending','running')",
             params![from, to],
             |r| r.get(0),
         )?;
-        Ok(n > 0)
+        Ok(n)
     }
 
     /// Tickets still waiting for an answer.

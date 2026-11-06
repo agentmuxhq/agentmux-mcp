@@ -415,7 +415,15 @@ impl Core {
         if hop > config::MAX_HOPS {
             bail!("hop limit ({}) reached: this question was itself triggered by a chain of asks", config::MAX_HOPS);
         }
-        if self.vault.open_ticket_between(&ctx.agent, to)? {
+        // One open question at a time to an agent that gets woken (each one costs a run). An
+        // inbox-only agent (Claude Desktop, a bot without a webhook) just reads its questions next
+        // time it's used, so they queue up there instead of blocking follow-ups.
+        let inbox_only = self.vault.providers()?.into_iter().find(|p| p["id"] == to).is_some_and(|p| p["wakeKind"] == "inbox");
+        let open = self.vault.open_tickets_between(&ctx.agent, to)?;
+        if inbox_only && open >= config::MAX_QUEUED {
+            bail!("@{} already has {open} questions waiting in @{to}'s inbox; it reads them the next time it's used. Wait for those first.", ctx.agent);
+        }
+        if !inbox_only && open > 0 {
             bail!("@{} already has an open question to @{to}; wait for it or use mux_get_reply", ctx.agent);
         }
         let session_room = match session_hint.filter(|s| !s.is_empty()) {
