@@ -320,7 +320,7 @@ impl Core {
     /// Does this caller work in a real project folder? (False for home and scratch folders.)
     pub fn in_project(&self, ctx: &CallerCtx) -> bool {
         let root = context::workspace_root(Path::new(&ctx.cwd));
-        root == config::home() || !context::is_scratch_dir(&root)
+        !context::is_scratch_dir(&root)
     }
 
     /// Create a ticket, record the request, and start waking the recipient in the background.

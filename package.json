@@ -8,6 +8,7 @@
     "lint": "tsc --noEmit",
     "dev:ui": "vite",
     "dev": "tauri dev",
+    "debug": "osascript -e 'quit app \"AgentMux\"' 2>/dev/null; tauri dev",
     "tauri": "tauri"
   },
   "dependencies": {

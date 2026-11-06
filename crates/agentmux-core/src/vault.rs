@@ -834,6 +834,23 @@ impl Vault {
         Ok(id)
     }
 
+    /// The thread two agents last talked in (either one asking), within `days`: (session, room).
+    pub fn recent_pair_session(&self, a: &str, b: &str, days: i64) -> Result<Option<(String, String)>> {
+        let cutoff = (Utc::now() - chrono::Duration::days(days)).to_rfc3339();
+        Ok(self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT t.session_id, t.room_id FROM tickets t JOIN rooms r ON r.id = t.room_id
+                 WHERE ((t.sender = ?1 AND t.recipient = ?2) OR (t.sender = ?2 AND t.recipient = ?1)) AND t.created_at > ?3
+                 ORDER BY t.created_at DESC LIMIT 1",
+                params![a, b, cutoff],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
+    }
+
     pub fn open_ticket_between(&self, from: &str, to: &str) -> Result<bool> {
         let n: i64 = self.conn.lock().unwrap().query_row(
             "SELECT COUNT(*) FROM tickets WHERE sender = ?1 AND recipient = ?2 AND status IN ('pending','running')",

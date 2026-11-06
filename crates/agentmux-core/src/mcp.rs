@@ -273,7 +273,23 @@ async fn call_tool(core: &Arc<Core>, ctx: &CallerCtx, name: &str, a: &Value) -> 
             // Which product. A room named by the agent (creating it if the user picked a new name),
             // or, for agents not running in a project folder, the router reading the conversation.
             let mut room_hint: Option<String> = None;
-            if let Some(r) = arg_str(a, "room").filter(|r| !r.trim().is_empty()) {
+            // Continuing a conversation: a cloud bot asking someone it's just been talking with goes
+            // back to that thread and its product, never a new room. A topic can still pick another
+            // thread there. (Local agents outside a project are routed by product below instead.)
+            let pair = if !local && session.is_none() && arg_str(a, "room").filter(|r| !r.trim().is_empty()).is_none() && !core.in_project(ctx) {
+                match core.resolve_agent(to) {
+                    Ok(peer) => core.vault.recent_pair_session(&ctx.agent, &peer, 7)?,
+                    Err(_) => None,
+                }
+            } else {
+                None
+            };
+            if let Some((s, r)) = &pair {
+                room_hint = Some(r.clone());
+                if topic.is_none() && !new_session {
+                    session = Some(s.clone());
+                }
+            } else if let Some(r) = arg_str(a, "room").filter(|r| !r.trim().is_empty()) {
                 room_hint = Some(match core.vault.find_room(r)? {
                     Some(id) => id,
                     None if local => core.vault.create_room(r)?,
@@ -305,6 +321,9 @@ async fn call_tool(core: &Arc<Core>, ctx: &CallerCtx, name: &str, a: &Value) -> 
                     let (room, _) = core.resolve_room(ctx, room_arg)?;
                     match crate::router::route(&core.vault, &ctx.agent, &room, t, q, !crate::providers::remote_access(&ctx.agent)).await? {
                         crate::router::Route::Use { session: s, .. } => session = Some(s),
+                        // A bot can't ask the user which thread: unless the topic clearly matches
+                        // another thread, it stays in the conversation it's in (new_session for a fresh one).
+                        crate::router::Route::New | crate::router::Route::Ask { .. } if !local && pair.is_some() => session = pair.as_ref().map(|p| p.0.clone()),
                         crate::router::Route::New => new_session = true,
                         crate::router::Route::Ask { options } => {
                             return Ok(json!({"status": "needs_choice", "topic": t, "options": options,

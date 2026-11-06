@@ -10,7 +10,8 @@ const MAX_DIFF: usize = 20_000;
 /// bots room and is handled separately.)
 pub fn is_scratch_dir(root: &Path) -> bool {
     let home = dirs::home_dir().unwrap_or_default();
-    root == home || root == Path::new("/") || root.starts_with(home.join("Documents/Codex"))
+    // AgentMux's own folder is where cloud bots' requests come from: never a product either.
+    root == home || root == Path::new("/") || root.starts_with(home.join("Documents/Codex")) || root.starts_with(crate::config::home())
 }
 
 pub fn workspace_root(start: &Path) -> PathBuf {
