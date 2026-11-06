@@ -28,11 +28,15 @@ pub async fn run_headless(core: Arc<Core>) -> Result<()> {
 
     // Tunnel: once the HTTP endpoint is up, take over a running tunnel or start the permanent one.
     let g = gw.clone();
+    let v0 = core.vault.clone();
     tokio::spawn(async move {
         while !g.http_bound() {
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
-        if !g.adopt().await && g.autostart() && g.permanent() {
+        // Brought back after an update restart if it was running before, even with autostart off.
+        let resume = v0.setting("tunnel.resume_after_update").ok().flatten().is_some();
+        let _ = v0.del_setting("tunnel.resume_after_update");
+        if !g.adopt().await && (g.autostart() || resume) && g.permanent() {
             if let Err(e) = g.start().await {
                 tracing::warn!("could not start the tunnel: {e}");
             }
@@ -69,6 +73,7 @@ pub async fn run_headless(core: Arc<Core>) -> Result<()> {
     // service keeps running old code until the next login. Only under launchd, which brings it back.
     if std::env::var("XPC_SERVICE_NAME").as_deref() == Ok("dev.agentmux.daemon") {
         let c = core.clone();
+        let g = gw.clone();
         tokio::spawn(async move {
             let Some(exe) = std::env::current_exe().ok() else { return };
             let stamp = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
@@ -86,6 +91,10 @@ pub async fn run_headless(core: Arc<Core>) -> Result<()> {
                         break;
                     }
                     tokio::time::sleep(Duration::from_secs(10)).await;
+                }
+                // The tunnel goes down with this process: bring it back once on the new version.
+                if g.status()["state"] == "running" {
+                    let _ = c.vault.set_setting("tunnel.resume_after_update", "1");
                 }
                 tracing::info!("AgentMux was updated; restarting the service on the new version");
                 std::process::exit(75); // non-zero: launchd's KeepAlive starts the new binary
