@@ -110,9 +110,31 @@ pub async fn run_wake(
     if !out.status.success() || stdout.is_empty() {
         let detail = strip_ansi(if !stdout.is_empty() { &stdout } else { &stderr });
         let tail: String = detail.chars().rev().take(500).collect::<Vec<_>>().into_iter().rev().collect();
-        return Err(anyhow!("@{agent} wake failed ({}): {}", out.status, tail));
+        let hint = login_hint(agent, &bin.display().to_string(), &tail).map(|h| format!("\n\n{h}")).unwrap_or_default();
+        return Err(anyhow!("@{agent} wake failed ({}): {}{hint}", out.status, tail));
     }
     Ok(stdout)
+}
+
+/// A wake that failed because the agent's CLI is signed out: say how to sign back in, since only
+/// the user can (it needs their browser). None for other failures.
+pub fn login_hint(agent: &str, bin: &str, output: &str) -> Option<String> {
+    let o = output.to_lowercase();
+    let signed_out = ["failed to authenticate", "oauth", "not logged in", "please log in", "please login", "/login", "invalid api key", "unauthenticated", "authentication required", "login required", "401"]
+        .iter()
+        .any(|k| o.contains(k));
+    if !signed_out {
+        return None;
+    }
+    let cli = std::path::Path::new(bin).file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_else(|| agent.to_string());
+    let how = match cli.as_str() {
+        "claude" => "open Terminal, run `claude`, type /login and finish signing in in your browser".to_string(),
+        "codex" => "open Terminal and run `codex login`".to_string(),
+        "gemini" => "open Terminal, run `gemini` and sign in when it asks".to_string(),
+        "cursor-agent" | "agent" => format!("open Terminal and run `{cli} login`"),
+        _ => format!("sign in to `{cli}` again in Terminal"),
+    };
+    Some(format!("@{agent}'s command-line login has expired, so AgentMux can't wake it. To fix: {how}. Then send the test ping again."))
 }
 
 /// Terminal colour codes (ESC [ … letter) out of a CLI's output, so errors read cleanly in the app.
