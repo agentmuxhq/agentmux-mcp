@@ -115,6 +115,7 @@ export default function ConnectModal({
     return () => clearInterval(t);
   }, [ticket]);
   const reply = ticket ? (replies[ticket] ?? polled) : undefined;
+  const pingPrompt = `Check AgentMux: call mux_inbox and answer the test ping (${ticket ?? ""}) with mux_reply.`;
   const meta = agentMeta(target);
 
   const run = async (fn: () => Promise<string>, label: string) => {
@@ -661,7 +662,35 @@ export default function ConnectModal({
             {ticket && (
               <div className="rounded-lg border border-white/10 p-3 text-xs">
                 <div className="mb-1 font-semibold">Test ping · {ticket}</div>
-                {!reply ? (
+                {!reply && p?.wakeKind === "inbox" ? (
+                  <div className="space-y-2 text-zinc-400">
+                    <div>
+                      Sent to {meta.name}&apos;s inbox. {meta.name} can&apos;t
+                      be woken automatically: it reads AgentMux only when you
+                      use it. Open{" "}
+                      {target === "claude-desktop"
+                        ? "the Claude app"
+                        : meta.name}
+                      , paste this into a chat, and the answer shows up here.
+                    </div>
+                    <div className="flex items-start gap-2 rounded bg-black/40 p-2 text-[11px] leading-relaxed text-zinc-300">
+                      <span className="min-w-0 flex-1 select-text">
+                        {pingPrompt}
+                      </span>
+                      <button
+                        onClick={() => copy("ping", pingPrompt)}
+                        className="shrink-0 text-zinc-400 hover:text-white"
+                        title="Copy"
+                      >
+                        {copied === "ping" ? (
+                          <Check size={14} />
+                        ) : (
+                          <Copy size={14} />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                ) : !reply ? (
                   <div className="text-zinc-400">
                     Waking {meta.name}… this can take up to a minute.
                   </div>
