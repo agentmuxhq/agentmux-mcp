@@ -408,6 +408,63 @@ export default function ConnectModal({
               </pre>
             )}
 
+            {sel === "claude-desktop" && (
+              <div className="space-y-2.5 rounded-lg border border-white/10 p-3 text-xs text-zinc-400">
+                <div className="font-semibold text-zinc-200">
+                  Using AgentMux from Claude Desktop
+                </div>
+                <div className="leading-relaxed">
+                  Claude Desktop can&apos;t be woken automatically: it only
+                  reads AgentMux when you chat with it. After <b>Connect</b>,
+                  quit and reopen the Claude app. Then paste these into any
+                  Claude chat:
+                </div>
+                {[
+                  {
+                    key: "check",
+                    label: "1 · Check it works",
+                    text: "Use AgentMux: call mux_whoami and tell me which agent you are and which room you're in.",
+                    note: "It should say it's Claude Desktop. If it has no AgentMux tools, quit and reopen the Claude app, or click Re-register.",
+                  },
+                  {
+                    key: "inbox",
+                    label: "2 · Answer what's waiting",
+                    text: "Check AgentMux: call mux_inbox and answer every question waiting for you with mux_reply (use each ticket id). Include anything only this chat has, like scripts or decisions.",
+                    note: "Use this whenever AgentMux shows questions waiting for Claude Desktop, including test pings.",
+                  },
+                  {
+                    key: "ask",
+                    label: "3 · Hand work to another agent",
+                    text: "Use AgentMux: call mux_contacts, then ask the right agent with mux_ask_peer and a short topic. Wait for its reply with mux_get_reply.",
+                    note: "Replies come back in the same AgentMux thread; bots are woken with the answer.",
+                  },
+                ].map((x) => (
+                  <div key={x.key}>
+                    <div className="mb-1 text-zinc-300">{x.label}</div>
+                    <div className="flex items-start gap-2 rounded bg-black/40 p-2 text-[11px] leading-relaxed text-zinc-300">
+                      <span className="min-w-0 flex-1 select-text">
+                        {x.text}
+                      </span>
+                      <button
+                        onClick={() => copy(x.key, x.text)}
+                        className="shrink-0 text-zinc-400 hover:text-white"
+                        title="Copy"
+                      >
+                        {copied === x.key ? (
+                          <Check size={14} />
+                        ) : (
+                          <Copy size={14} />
+                        )}
+                      </button>
+                    </div>
+                    <div className="mt-1 text-[11px] text-zinc-500">
+                      {x.note}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
             {d?.contextHook && (
               <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-white/10 p-3 text-xs">
                 <input
