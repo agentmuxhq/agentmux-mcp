@@ -11,6 +11,7 @@ fn extra_dirs() -> Vec<PathBuf> {
         v.push(h.join(".local/bin"));
         v.push(h.join(".claude/local"));
         v.push(h.join(".cargo/bin"));
+        v.push(h.join(".opencode/bin")); // OpenCode's install script
         // Global npm installs (gemini, codex, claude…) live wherever the user's Node manager puts
         // them; an app or login service doesn't inherit the shell's PATH, so look in each.
         for versions in [".nvm/versions/node", ".local/share/mise/installs/node", ".asdf/installs/nodejs", ".local/share/fnm/node-versions", "Library/Application Support/fnm/node-versions"] {
@@ -124,6 +125,7 @@ fn login_steps(cli: &str) -> Option<(Vec<&'static str>, &'static str)> {
         "codex" => (vec!["login"], "finish signing in in your browser"),
         "gemini" => (vec![], "pick a sign-in method when it asks, and finish in your browser"),
         "cursor-agent" | "agent" => (vec!["login"], "finish signing in in your browser"),
+        "opencode" => (vec!["auth", "login"], "pick your model provider and sign in"),
         _ => return None,
     })
 }

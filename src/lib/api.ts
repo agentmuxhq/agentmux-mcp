@@ -78,6 +78,16 @@ const FALLBACK: CatalogEntry[] = [
     wake: "inbox",
     contextHook: false,
   },
+  {
+    id: "opencode",
+    name: "OpenCode",
+    color: "#211E1E",
+    hint: "MCP stdio · ~/.config/opencode/opencode.json",
+    multiInstance: false,
+    remoteAccess: false,
+    wake: "cli",
+    contextHook: false,
+  },
 ];
 
 let known: Provider[] = [];

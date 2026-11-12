@@ -17,6 +17,7 @@ pub mod cursor;
 pub mod gemini;
 pub mod grok;
 pub mod manifest;
+pub mod opencode;
 
 /// How a provider shows up in the UI and in `mux_contacts`.
 #[derive(Clone, Debug)]
@@ -79,7 +80,7 @@ pub trait Provider: Send + Sync {
 }
 
 pub fn builtin() -> Vec<Arc<dyn Provider>> {
-    vec![Arc::new(cursor::Cursor), Arc::new(grok::Grok), Arc::new(claude_code::ClaudeCode), Arc::new(codex::Codex), Arc::new(gemini::Gemini), Arc::new(claude_desktop::ClaudeDesktop)]
+    vec![Arc::new(cursor::Cursor), Arc::new(grok::Grok), Arc::new(claude_code::ClaudeCode), Arc::new(codex::Codex), Arc::new(gemini::Gemini), Arc::new(claude_desktop::ClaudeDesktop), Arc::new(opencode::OpenCode)]
 }
 
 /// Built-ins first, then manifests from `~/.agentmux/providers/`.

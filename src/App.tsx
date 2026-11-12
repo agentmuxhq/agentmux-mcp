@@ -609,7 +609,7 @@ export default function App() {
         >
           <Settings size={14} /> Settings
           <span className="ml-auto text-[11px] text-zinc-600">
-            {connectedCount}/4 connected
+            {connectedCount}/{ov.providers.length} connected
           </span>
         </button>
       </aside>

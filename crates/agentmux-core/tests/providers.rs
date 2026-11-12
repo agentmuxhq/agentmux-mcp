@@ -23,7 +23,7 @@ fn fake_bin(dir: &PathBuf, name: &str) {
 #[test]
 fn registry_and_golden_wake_args() {
     let ids: Vec<String> = providers::builtin().iter().map(|p| p.info().id).collect();
-    assert_eq!(ids, ["cursor", "grok", "claude", "chatgpt", "gemini", "claude-desktop"]);
+    assert_eq!(ids, ["cursor", "grok", "claude", "chatgpt", "gemini", "claude-desktop", "opencode"]);
     for p in providers::builtin() {
         let i = p.info();
         assert!(!i.name.is_empty() && i.color.starts_with('#'), "{i:?}");
@@ -198,4 +198,47 @@ fn dev_builds_never_take_the_cli_link_from_an_install() {
     assert!(is_dev_build(Path::new("/Users/x/agentmux-mcp/target/release/agentmux")));
     assert!(!is_dev_build(Path::new("/Applications/AgentMux.app/Contents/MacOS/agentmux")));
     assert!(!is_dev_build(Path::new("/opt/homebrew/Cellar/agentmux/1.0.5/bin/agentmux")));
+}
+
+#[test]
+fn opencode_registers_in_either_config_format_and_wakes_read_only() {
+    let d = tmp("opencode");
+    let path = d.join("opencode.json");
+    // SAFETY: only this test reads AGENTMUX_OPENCODE_CONFIG.
+    unsafe { std::env::set_var("AGENTMUX_OPENCODE_CONFIG", &path) };
+    let p = providers::get("opencode").unwrap();
+    assert_eq!(p.info().name, "OpenCode");
+    let link = PathBuf::from("/Users/x/.agentmux/bin/agentmux");
+    let cmd = json!(["/Users/x/.agentmux/bin/agentmux", "mcp", "--agent", "opencode"]);
+
+    // Current format (no file yet): mcp.servers.agentmux.
+    assert!(!p.configured());
+    p.install(&link).unwrap();
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(v["mcp"]["servers"]["agentmux"], json!({"type": "local", "command": cmd}));
+    assert!(p.configured());
+    p.uninstall().unwrap();
+    assert!(!p.configured());
+
+    // Older format, with the user's other servers: mcp.<name> + enabled, others kept, no `servers` added.
+    std::fs::write(&path, json!({"$schema": "https://opencode.ai/config.json",
+        "mcp": {"pencil": {"type": "local", "command": ["pencil"], "enabled": true}}}).to_string()).unwrap();
+    p.install(&link).unwrap();
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(v["mcp"]["agentmux"]["command"], cmd);
+    assert_eq!(v["mcp"]["agentmux"]["enabled"], true);
+    assert_eq!(v["mcp"]["pencil"]["command"], json!(["pencil"]));
+    assert!(v["mcp"].get("servers").is_none(), "{v}");
+    p.uninstall().unwrap();
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(v["mcp"].get("agentmux").is_none() && v["mcp"].get("servers").is_none() && v["mcp"]["pencil"].is_object(), "{v}");
+
+    // Headless wake: plan (read-only) unless edits are allowed; never waits on a permission prompt.
+    let bin_dir = tmp("opencode-bin");
+    fake_bin(&bin_dir, "opencode");
+    unsafe { std::env::set_var("PATH", format!("{}:{}", bin_dir.display(), std::env::var("PATH").unwrap_or_default())) };
+    let w = p.wake(&WakeRequest { prompt: "hi", workspace: "/tmp", allow_edits: false, ticket: "T-1" }).unwrap();
+    assert_eq!(w.args, ["run", "--agent", "plan", "--auto", "--archived", "--title", "AgentMux T-1", "hi"]);
+    let w = p.wake(&WakeRequest { prompt: "hi", workspace: "/tmp", allow_edits: true, ticket: "T-1" }).unwrap();
+    assert_eq!(w.args[2], "build");
 }
