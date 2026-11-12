@@ -21,7 +21,7 @@ dependencies = [
 
 [[package]]
 name = "agentmux-app"
-version = "1.0.5"
+version = "1.0.6"
 dependencies = [
  "agentmux-core",
  "anyhow",
@@ -38,7 +38,7 @@ dependencies = [
 
 [[package]]
 name = "agentmux-cli"
-version = "1.0.5"
+version = "1.0.6"
 dependencies = [
  "agentmux-core",
  "anyhow",
